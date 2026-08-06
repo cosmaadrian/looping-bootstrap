@@ -5,6 +5,14 @@ n_train_iters: 10000
 actually_stop_at: 10000
 batch_size: 12
 
+trainer: recurrent_distillation_trainer
+recurrent_distillation: true
+student_depths: [1, 2, 4, 8]
+teacher_depth_multiplier: 2
+distillation_weight: 1.0
+temperature: 1.0
+anchor_all_depths: true
+
 input_tokenizer:
   vocab_size: 50257
   path: openai-community/gpt2
@@ -35,14 +43,14 @@ model_args:
 model_checkpoint:
   save_model: 0
   override_checkpoints: 1
-  monitor_quantity: "pretrain#loss"
+  monitor_quantity: "pretrain#loss@16_loops"
   direction: down
   base_dir: 'checkpoints/'
   delete_previous: True
   total_saves: 10
 
 evaluators:
-  - name: pretraining
+  - name: recurrent_distillation
     kind: test
     args:
       display_name: pretrain
