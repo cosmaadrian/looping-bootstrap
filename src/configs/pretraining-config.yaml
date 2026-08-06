@@ -26,6 +26,8 @@ model: llm
 model_args:
   dmodel: 256
   num_layers: 8
+  mean_recurrence: 4
+  mean_backprop_depth: 2
   dropout: 0.0
   attn_dropout: 0.0
   cross_attn_dropout: 0.0

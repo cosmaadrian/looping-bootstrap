@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from .utils import MuReadout
 from .building_blocks import TransformerEncoder
@@ -48,6 +49,24 @@ class TransformerDecoder(nn.Module):
             args = args,
         )
 
+    @torch.compiler.disable
+    def loop_layers(self, embeddings, attention_mask, num_steps_pair):
+        num_steps_no_grad, num_steps_with_grad = map(int, num_steps_pair)
+        outputs = embeddings
+
+        with torch.no_grad():
+            for _ in range(num_steps_no_grad):
+                outputs = self.model(outputs, mask = attention_mask, causal_mask = True)
+
+        if num_steps_no_grad:
+            # Keep embeddings in DDP's graph; TBPTT intentionally makes this gradient zero.
+            outputs = outputs + embeddings.sum() * 0
+
+        for _ in range(num_steps_with_grad):
+            outputs = self.model(outputs, mask = attention_mask, causal_mask = True)
+
+        return outputs
+
     def forward(self, batch, **kwargs):
         input_ids = batch['input_ids']
         attention_mask = batch.get('attention_mask', None)
@@ -57,11 +76,9 @@ class TransformerDecoder(nn.Module):
 
         embeddings = self.token_embeddings(input_ids)
 
-        outputs = self.model(
-            embeddings,
-            mask = attention_mask,
-            causal_mask = True,
-        )
+        num_loops = batch.get('num_loops', self.args.model_args.get('mean_recurrence', 1))
+        num_steps_pair = batch.get('num_steps_pair', (0, num_loops))
+        outputs = self.loop_layers(embeddings, attention_mask, num_steps_pair)
 
         out = self.decoder_out(outputs)
 
