@@ -1,0 +1,78 @@
+env: adrian-fep
+
+seed: 666
+run_id: 1
+
+accumulation_steps: 1
+slurm_job_id: "0"
+clip_grad_norm: 1
+max_grad_norm: 1.5
+
+resume_from: ""
+
+evaluators:
+  - name: generation
+    args:
+      solution: 42
+
+epochs: -1
+
+n_train_iters: 40000
+actually_stop_at: 10000
+
+batch_size: 64
+eval_every: 1 # epochs
+eval_batch_size: 32
+eval_every_batches: 4096
+
+trainer: lm_trainer
+
+dataset: pretraining
+dataset_args:
+  dataset_name: wikimedia/wikipedia
+  subset: 20231101.en
+  chunk_size: 256
+
+model_checkpoint:
+  save_model: 0
+  override_checkpoints: 1
+  monitor_quantity: "pretrain#loss"
+  direction: down
+  base_dir: 'checkpoints/'
+
+model: llm
+model_args:
+  dmodel: 256
+  num_layers: 4
+  dropout: 0.0
+  attn_dropout: 0.0
+  cross_attn_dropout: 0.0
+
+####################################################
+####################################################
+####################################################
+
+model_width_multiplier: 1.0
+char_model_width_multiplier: 0.5
+
+####################################################
+####################################################
+####################################################
+
+optimizer_args:
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-10
+  weight_decay: 0.01
+
+scheduler_args:
+  max_lr: 0.0001
+  base_batch_size: 128
+  num_warmup_steps: 256
+  reset_scheduler: 0
+
+log_grads: 0
+log_every: 128 # batches
+
+use_compile: 1 # doesn't work without Triton (e.g. genesis)
+use_amp: 1

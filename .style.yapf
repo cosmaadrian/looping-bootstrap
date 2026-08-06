@@ -1,0 +1,8 @@
+[style]
+based_on_style = pep8
+
+# turn on spaces around “=” in defaults & named args:
+spaces_around_default_or_named_assign = True
+
+# get bigger screen bro
+column_limit = 260

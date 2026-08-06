@@ -1,0 +1,9 @@
+wandb/
+experiments/.hf_token
+experiments/slurm-*
+checkpoints/
+checkpoints_acumen/
+checkpoints_base/
+checkpoints_inst/
+assets/
+figures/

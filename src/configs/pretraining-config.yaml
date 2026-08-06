@@ -1,0 +1,47 @@
+$extends$: configs/config.yaml
+
+env: fep
+n_train_iters: 10000
+actually_stop_at: 10000
+batch_size: 12
+
+input_tokenizer:
+  vocab_size: 50257
+  path: openai-community/gpt2
+
+dataset_args:
+  dataset_name:
+      - ohsuz/fineweb-edu-2024-10-1M  
+      - ohsuz/fineweb-edu-2024-10-from-1M-to-2M 
+      # - ohsuz/fineweb-edu-2024-10-from-2M-to-3M 
+      # - ohsuz/fineweb-edu-2024-10-from-3M-to-4M 
+      # - ohsuz/fineweb-edu-2024-10-from-4M-to-5M 
+      # - ohsuz/fineweb-edu-2024-10-from-5M-to-6M
+      # - ohsuz/fineweb-edu-2024-10-from-6M-to-7M
+      # - ohsuz/fineweb-edu-2024-10-from-7M-to-8M
+  subset: ""
+  chunk_size: 768
+
+model: llm
+model_args:
+  dmodel: 256
+  num_layers: 8
+  dropout: 0.0
+  attn_dropout: 0.0
+  cross_attn_dropout: 0.0
+
+model_checkpoint:
+  save_model: 0
+  override_checkpoints: 1
+  monitor_quantity: "pretrain#loss"
+  direction: down
+  base_dir: 'checkpoints/'
+  delete_previous: True
+  total_saves: 10
+
+evaluators:
+  - name: pretraining
+    kind: test
+    args:
+      display_name: pretrain
+      dataset_name: ohsuz/fineweb-edu-2024-10-from-8M-to-9M
