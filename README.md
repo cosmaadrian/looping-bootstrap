@@ -17,12 +17,11 @@ NUM_GPUS=1 ENV_NAME=fep ./src/experiments/run_pretraining.sh
 
 `src/configs/pretraining-config.yaml` selects `recurrent_distillation_trainer`.
 Each batch samples a student depth uniformly from 1 through
-`2 * mean_recurrence - 1`, runs a detached teacher at the configured depth
-multiplier, and combines next-token cross-entropy with temperature-scaled
-teacher-to-student KL divergence.
+`2 * mean_recurrence - 1`, adds a uniformly sampled teacher-depth offset from
+the configured inclusive range, and combines next-token cross-entropy with
+temperature-scaled teacher-to-student KL divergence. The default offsets of
+2 through 4 give teacher depths from 3 through 11 when `mean_recurrence` is 4.
 
-The recurrent-distillation evaluator records a pre-training generation baseline
-and evaluates the default reference depths (1, 2, 4, 8, 16, and 32 loops) plus
-the maximum possible teacher depth. It logs loss and token accuracy at every
-depth, `accuracy_delta@r_to_2r_loops`, shallow before/after improvements, and
-whether the model at the original teacher depth beats that baseline.
+The recurrent-distillation evaluator is independent of the training-time
+teacher schedule. It evaluates the default reference depths of 1, 2, 4, and 8
+loops, or the explicitly configured evaluation depths.

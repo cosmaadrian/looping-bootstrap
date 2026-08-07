@@ -17,26 +17,13 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
     def __init__(self, args, model, evaluator_args, logger = None):
         super().__init__(args, model, evaluator_args, logger)
 
-        mean_recurrence = int(args.model_args.mean_recurrence)
-        if mean_recurrence < 1:
-            raise ValueError('mean_recurrence must be at least 1')
-
-        self.max_student_depth = 2 * mean_recurrence - 1
-        self.original_teacher_depth = self.max_student_depth * int(args.teacher_depth_multiplier)
         configured_depths = evaluator_args.get('depths')
         if configured_depths is None:
-            configured_depths = sorted(set((*self.DEFAULT_DEPTHS, self.original_teacher_depth)))
+            configured_depths = self.DEFAULT_DEPTHS
 
         self.depths = tuple(int(depth) for depth in configured_depths)
         if not self.depths or any(depth < 1 for depth in self.depths):
             raise ValueError('evaluation depths must contain positive integers')
-
-        self.student_depths = tuple(
-            depth for depth in self.depths if depth <= self.max_student_depth
-        )
-        if self.original_teacher_depth not in self.depths:
-            raise ValueError(f'evaluation depths must include the original teacher depth '
-                             f'{self.original_teacher_depth}')
 
         self._generation_zero = None
 
