@@ -107,7 +107,6 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
             ])
 
         depth = self.original_teacher_depth
-        deep_accuracy_improvement = accuracy_by_depth[depth] - baseline_accuracies[depth]
         deep_loss_improvement = baseline_losses[depth] - losses[self.depths.index(depth)]
         metrics.extend([
             Metric(

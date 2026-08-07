@@ -2,11 +2,18 @@ import os
 import re
 import torch
 import functools
+import hashlib
+import json
+import shutil
+import tempfile
+from pathlib import Path
 from transformers import AutoTokenizer
 from lib.accelerator import AcumenAccelerator
 from torch.utils.data import DataLoader
 from lib.dataset_extra import AcumenDataset
 from torch.utils.data.distributed import DistributedSampler
+from datasets.fingerprint import Hasher
+from filelock import FileLock
 
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
@@ -18,6 +25,7 @@ TOKS_PER_PARAM = 19  # chinchilla scaling
 BYTE_VOCAB_SIZE = 256
 PAD_TOKEN = '<pad>'
 EOS_TOKEN = '<eos>'
+CHUNK_CACHE_VERSION = 1
 
 comments_re = re.compile(r'//.*?$|/\*.*?\*/', re.DOTALL | re.MULTILINE)
 
@@ -49,6 +57,49 @@ def split_chunks(example, chunk_size):
         if percent_non_ascii(t) <= 0.3:
             texts.append(remove_non_ascii(t))
     return {'text': texts}
+
+
+def _chunk_cache_path(dataset, chunking_fn, chunk_size, cache_root = None):
+    """Return a stable cache path for a chunked version of ``dataset``."""
+    cache_key = {
+        'dataset_fingerprint': dataset._fingerprint,
+        'chunking_fingerprint': Hasher.hash(chunking_fn),
+        'chunk_size': chunk_size,
+        'chunk_cache_version': CHUNK_CACHE_VERSION,
+    }
+    digest = hashlib.sha256(json.dumps(cache_key, sort_keys = True).encode('utf-8')).hexdigest()
+    cache_root = Path(cache_root or hfds.config.HF_DATASETS_CACHE)
+    return cache_root / 'looping-bootstrap' / 'pretraining-chunks' / digest
+
+
+def _load_or_create_chunked_dataset(dataset, chunking_fn, chunk_size, map_num_proc):
+    cache_path = _chunk_cache_path(dataset, chunking_fn, chunk_size)
+    cache_path.parent.mkdir(parents = True, exist_ok = True)
+
+    # Training processes commonly start together. Only one of them should run
+    # the expensive map while the others wait and then load the finished cache.
+    with FileLock(f'{cache_path}.lock'):
+        if cache_path.is_dir():
+            print(f"::: Loading chunked dataset from cache: {cache_path}")
+            return hfds.load_from_disk(str(cache_path))
+
+        print(f"::: Building chunked dataset cache: {cache_path}")
+        chunked_dataset = dataset.map(
+            chunking_fn,
+            batched = True,
+            batch_size = 2048,
+            num_proc = map_num_proc,
+        )
+
+        temporary_path = Path(tempfile.mkdtemp(prefix = f'.{cache_path.name}.', dir = cache_path.parent))
+        try:
+            chunked_dataset.save_to_disk(str(temporary_path))
+            os.replace(temporary_path, cache_path)
+        finally:
+            if temporary_path.exists():
+                shutil.rmtree(temporary_path)
+
+        return chunked_dataset
 
 
 def _coerce_token_ids(encoded):
@@ -226,7 +277,12 @@ class PretrainingDataset(HFDataset):
             _dataset = hfds.concatenate_datasets(final_ds)
 
             print(f"::: Initially, the dataset has {len(_dataset)} samples.")
-            _dataset = _dataset.map(chunking_fn, batched = True, batch_size = 2048, num_proc = map_num_proc)
+            _dataset = _load_or_create_chunked_dataset(
+                dataset = _dataset,
+                chunking_fn = chunking_fn,
+                chunk_size = self.chunk_size,
+                map_num_proc = map_num_proc,
+            )
             print(f"::: After splitting into chunks of size {self.chunk_size}, the dataset has {len(_dataset)} samples or {len(_dataset) * AVG_TOKS_PER_CHUNK} tokens.")
 
             model_num_params = self.args.num_params
@@ -243,7 +299,12 @@ class PretrainingDataset(HFDataset):
         else:
             eval_dataset_name = ds_names[-1]
             _dataset = hfds.load_dataset(eval_dataset_name, self.subset, split = 'train', token = self.hf_token)
-            _dataset = _dataset.map(chunking_fn, batched = True, batch_size = 2048, num_proc = map_num_proc)
+            _dataset = _load_or_create_chunked_dataset(
+                dataset = _dataset,
+                chunking_fn = chunking_fn,
+                chunk_size = self.chunk_size,
+                map_num_proc = map_num_proc,
+            )
             num_batches_of_interest = min(int(256 * 128), len(_dataset))
             dataset = _dataset.select(range(num_batches_of_interest))
 
