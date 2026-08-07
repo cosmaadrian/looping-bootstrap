@@ -33,6 +33,26 @@ class TransformerDecoder(nn.Module):
         )
         ###################################################################
 
+        self.pre_transformer = TransformerEncoder(
+            args = self.args,
+            dmodel = int(self.args.model_args.dmodel * self.args.model_width_multiplier),
+            depth = 1,
+            nheads = int(8 * self.args.model_width_multiplier),
+            dropout = self.args.model_args.dropout,
+            attn_dropout = self.args.model_args.attn_dropout,
+            has_context = False,
+        )
+
+        self.post_transformer = TransformerEncoder(
+            args = self.args,
+            dmodel = int(self.args.model_args.dmodel * self.args.model_width_multiplier),
+            depth = 1,
+            nheads = int(8 * self.args.model_width_multiplier),
+            dropout = self.args.model_args.dropout,
+            attn_dropout = self.args.model_args.attn_dropout,
+            has_context = False,
+        )
+
         self.model = TransformerEncoder(
             args = self.args,
             dmodel = int(self.args.model_args.dmodel * self.args.model_width_multiplier),
@@ -78,7 +98,10 @@ class TransformerDecoder(nn.Module):
 
         num_loops = batch.get('num_loops', self.args.model_args.get('mean_recurrence', 1))
         num_steps_pair = batch.get('num_steps_pair', (0, num_loops))
+
+        outputs = self.pre_transformer(embeddings, mask = attention_mask, causal_mask = True)
         outputs = self.loop_layers(embeddings, attention_mask, num_steps_pair)
+        outputs = self.post_transformer(outputs, mask = attention_mask, causal_mask = True)
 
         out = self.decoder_out(outputs)
 

@@ -39,10 +39,11 @@ class RecurrentDistillationTrainer(LMTrainer):
         ).item()
 
     def _forward_at_depth(self, batch, depth):
+        grad_depth = min(depth, int(self.args.model_args.mean_backprop_depth))
         return self.model({
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
-            'num_loops': depth,
+            'num_loops': (depth - grad_depth, grad_depth),
         })
 
     def _distillation_loss(self, student_logits, teacher_logits, labels):

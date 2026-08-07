@@ -65,72 +65,13 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
         for index, depth in enumerate(self.depths):
             metrics.extend([
                 Metric(
-                    f'loss@{depth}_loops',
+                    f'loss@{depth}',
                     value = losses[index],
-                    monotonicity = ['instant', 'down'],
-                    evaluator = self,
-                ),
-                Metric(
-                    f'accuracy@{depth}_loops',
-                    value = accuracies[index],
-                    monotonicity = ['instant', 'up'],
+                    monotonicity = ['instant'],
                     evaluator = self,
                 ),
             ])
 
-        accuracy_by_depth = dict(zip(self.depths, accuracies))
-        for depth in self.depths:
-            teacher_depth = 2 * depth
-            if teacher_depth not in accuracy_by_depth:
-                continue
-
-            metrics.append(Metric(
-                f'accuracy_delta@{depth}_to_{teacher_depth}_loops',
-                value = accuracy_by_depth[teacher_depth] - accuracy_by_depth[depth],
-                monotonicity = ['instant', 'up'],
-                evaluator = self,
-            ))
-
-        if self._generation_zero is None:
-            self._generation_zero = {
-                'losses': dict(zip(self.depths, losses)),
-                'accuracies': accuracy_by_depth,
-            }
-
-        baseline_losses = self._generation_zero['losses']
-        baseline_accuracies = self._generation_zero['accuracies']
-        for depth in self.student_depths:
-            metrics.extend([
-                Metric(
-                    f'shallow_accuracy_improvement@{depth}_loops',
-                    value = accuracy_by_depth[depth] - baseline_accuracies[depth],
-                    monotonicity = ['instant', 'up'],
-                    evaluator = self,
-                ),
-                Metric(
-                    f'shallow_loss_improvement@{depth}_loops',
-                    value = baseline_losses[depth] - losses[self.depths.index(depth)],
-                    monotonicity = ['instant', 'up'],
-                    evaluator = self,
-                ),
-            ])
-
-        depth = self.original_teacher_depth
-        deep_loss_improvement = baseline_losses[depth] - losses[self.depths.index(depth)]
-        metrics.extend([
-            Metric(
-                f'previous_teacher_loss@{depth}_loops',
-                value = baseline_losses[depth],
-                monotonicity = ['instant'],
-                evaluator = self,
-            ),
-            Metric(
-                f'deep_model_loss_improvement@{depth}_loops',
-                value = deep_loss_improvement,
-                monotonicity = ['instant', 'up'],
-                evaluator = self,
-            ),
-        ])
         return metrics
 
     @torch.no_grad()
