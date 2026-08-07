@@ -100,7 +100,7 @@ class TransformerDecoder(nn.Module):
         num_steps_pair = batch.get('num_steps_pair', (0, num_loops))
 
         outputs = self.pre_transformer(embeddings, mask = attention_mask, causal_mask = True)
-        outputs = self.loop_layers(embeddings, attention_mask, num_steps_pair)
+        outputs = self.loop_layers(outputs, attention_mask, num_steps_pair)
         outputs = self.post_transformer(outputs, mask = attention_mask, causal_mask = True)
 
         out = self.decoder_out(outputs)
