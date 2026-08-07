@@ -14,7 +14,8 @@ class RecurrentDistillationTrainer(LMTrainer):
         self.mean_recurrence = int(args.model_args.mean_recurrence)
         self.mean_backprop_depth = int(args.model_args.mean_backprop_depth)
         self.max_student_depth = 2 * self.mean_recurrence - 1
-        self.teacher_depth_multiplier = int(args.teacher_depth_multiplier)
+        self.teacher_depth_offset_min = int(args.teacher_depth_offset_min)
+        self.teacher_depth_offset_max = int(args.teacher_depth_offset_max)
         self.distillation_weight = float(args.distillation_weight)
         self.temperature = float(args.temperature)
         self.anchor_all_depths = bool(args.anchor_all_depths)
@@ -23,23 +24,32 @@ class RecurrentDistillationTrainer(LMTrainer):
             raise ValueError('mean_recurrence must be at least 1')
         if self.mean_backprop_depth < 1:
             raise ValueError('mean_backprop_depth must be at least 1')
-        if self.teacher_depth_multiplier < 1:
-            raise ValueError('teacher_depth_multiplier must be at least 1')
+        if self.teacher_depth_offset_min < 1:
+            raise ValueError('teacher_depth_offset_min must be at least 1')
+        if self.teacher_depth_offset_max < self.teacher_depth_offset_min:
+            raise ValueError('teacher_depth_offset_max must be at least teacher_depth_offset_min')
         if self.distillation_weight < 0:
             raise ValueError('distillation_weight must be non-negative')
         if self.temperature <= 0:
             raise ValueError('temperature must be greater than zero')
 
-    def _sample_student_depth(self, batch_idx):
-        # Use a CPU generator so every DDP rank samples the same depth.
+    def _sample_depths(self, batch_idx):
+        # Use one CPU generator so every DDP rank samples the same depth pair.
         generator = torch.Generator(device = 'cpu')
         generator.manual_seed(self.args.seed + batch_idx)
-        return torch.randint(
+        student_depth = torch.randint(
             low = 1,
             high = self.max_student_depth + 1,
             size = (),
             generator = generator,
         ).item()
+        teacher_offset = torch.randint(
+            low = self.teacher_depth_offset_min,
+            high = self.teacher_depth_offset_max + 1,
+            size = (),
+            generator = generator,
+        ).item()
+        return student_depth, student_depth + teacher_offset
 
     def _forward_at_depth(self, batch, depth):
         grad_depth = min(depth, self.mean_backprop_depth)
@@ -74,8 +84,7 @@ class RecurrentDistillationTrainer(LMTrainer):
         accumulation_steps = int(self.args.get('accumulation_steps', 1))
         microbatch_idx = (self.iter_idx - 1) % accumulation_steps
         sample_idx = batch_idx * accumulation_steps + microbatch_idx
-        student_depth = self._sample_student_depth(sample_idx)
-        teacher_depth = student_depth * self.teacher_depth_multiplier
+        student_depth, teacher_depth = self._sample_depths(sample_idx)
 
         student_logits = self._forward_at_depth(batch, student_depth)
         next_token_loss = self.next_token_prediction_loss(
