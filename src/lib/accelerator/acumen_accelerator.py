@@ -175,12 +175,12 @@ class AcumenAccelerator:
         os.environ['WANDB_NOTES'] = self.args.notes
 
         if self.args.resume_from != '':
-            wandb.init(project = 'conlangs', group = self.args.group, entity = self.args.environment.extra_args.wandb_entity, id = self.args.wandb_run_id, resume = 'must')
+            wandb.init(project = 'looping-bootstram', group = self.args.group, entity = self.args.environment.extra_args.wandb_entity, id = self.args.wandb_run_id, resume = 'must')
         else:
             self.args.wandb_run_id = wandb.util.generate_id()
 
             wandb.init(
-                project = 'conlangs',
+                project = 'looping-bootstrap',
                 group = self.args.group,
                 entity = self.args.environment.extra_args.wandb_entity,
                 id = self.args.wandb_run_id,

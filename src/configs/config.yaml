@@ -23,7 +23,7 @@ actually_stop_at: 10000
 batch_size: 64
 eval_every: 1 # epochs
 eval_batch_size: 32
-eval_every_batches: 4096
+eval_every_batches: 512
 
 trainer: lm_trainer
 
@@ -68,11 +68,11 @@ optimizer_args:
 scheduler_args:
   max_lr: 0.0001
   base_batch_size: 128
-  num_warmup_steps: 256
+  num_warmup_steps: 512
   reset_scheduler: 0
 
 log_grads: 0
 log_every: 128 # batches
 
-use_compile: 1 # doesn't work without Triton (e.g. genesis)
+use_compile: 0 # doesn't work without Triton (e.g. genesis)
 use_amp: 1

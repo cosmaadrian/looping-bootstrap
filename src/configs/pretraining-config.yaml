@@ -1,9 +1,9 @@
 $extends$: configs/config.yaml
 
 env: fep
-n_train_iters: 10000
-actually_stop_at: 10000
-batch_size: 12
+n_train_iters: 40000
+actually_stop_at: 40000
+batch_size: 32
 
 trainer: recurrent_distillation_trainer
 recurrent_distillation: true
@@ -28,7 +28,7 @@ dataset_args:
       # - ohsuz/fineweb-edu-2024-10-from-6M-to-7M
       # - ohsuz/fineweb-edu-2024-10-from-7M-to-8M
   subset: ""
-  chunk_size: 768
+  chunk_size: 512 
 
 model: llm
 model_args:
@@ -50,7 +50,7 @@ model_checkpoint:
   total_saves: 10
 
 evaluators:
-  - name: recurrent_distillation
+  - name: recurrent_distillation 
     kind: test
     args:
       display_name: pretrain

@@ -1150,6 +1150,67 @@ wheels = [
 ]
 
 [[package]]
+name = "looping-bootstrap"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "beartype" },
+    { name = "colorama" },
+    { name = "datasets" },
+    { name = "easydict" },
+    { name = "einops" },
+    { name = "inflection" },
+    { name = "ipykernel" },
+    { name = "ipython" },
+    { name = "levenshtein" },
+    { name = "nltk" },
+    { name = "pandarallel" },
+    { name = "pandas" },
+    { name = "pre-commit" },
+    { name = "ruff" },
+    { name = "scikit-learn" },
+    { name = "seaborn" },
+    { name = "shap" },
+    { name = "tokenizers" },
+    { name = "torch" },
+    { name = "torchinfo" },
+    { name = "tqdm" },
+    { name = "transformers" },
+    { name = "wandb" },
+    { name = "xgboost" },
+    { name = "yapf" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beartype", specifier = ">=0.22.9" },
+    { name = "colorama", specifier = ">=0.4.6" },
+    { name = "datasets", specifier = ">=4.5.0" },
+    { name = "easydict", specifier = ">=1.13" },
+    { name = "einops", specifier = ">=0.8.2" },
+    { name = "inflection", specifier = ">=0.5.1" },
+    { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "ipython", specifier = ">=9.10.0" },
+    { name = "levenshtein", specifier = ">=0.27.3" },
+    { name = "nltk", specifier = ">=3.9.2" },
+    { name = "pandarallel", specifier = ">=1.6.5" },
+    { name = "pandas", specifier = ">=3.0.0" },
+    { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "ruff", specifier = ">=0.15.0" },
+    { name = "scikit-learn", specifier = ">=1.8.0" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "shap", specifier = ">=0.51.0" },
+    { name = "tokenizers", specifier = ">=0.22.2" },
+    { name = "torch", specifier = ">=2.10.0" },
+    { name = "torchinfo", specifier = ">=1.8.0" },
+    { name = "tqdm", specifier = ">=4.67.3" },
+    { name = "transformers", specifier = ">=5.14.1" },
+    { name = "wandb", specifier = ">=0.24.2" },
+    { name = "xgboost", specifier = ">=3.1.1" },
+    { name = "yapf", specifier = ">=0.43.0" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1289,67 +1350,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/74/97e72a36efd4ae2bccb3463284300f8953f199b5ffbc04cbbb0ec78f74b1/matplotlib_inline-0.2.1.tar.gz", hash = "sha256:e1ee949c340d771fc39e241ea75683deb94762c8fa5f2927ec57c83c4dffa9fe", size = 8110, upload-time = "2025-10-23T09:00:22.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/33/ee4519fa02ed11a94aef9559552f3b17bb863f2ecfe1a35dc7f548cde231/matplotlib_inline-0.2.1-py3-none-any.whl", hash = "sha256:d56ce5156ba6085e00a9d54fead6ed29a9c47e215cd1bba2e976ef39f5710a76", size = 9516, upload-time = "2025-10-23T09:00:20.675Z" },
-]
-
-[[package]]
-name = "matryoshka-updates"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "beartype" },
-    { name = "colorama" },
-    { name = "datasets" },
-    { name = "easydict" },
-    { name = "einops" },
-    { name = "inflection" },
-    { name = "ipykernel" },
-    { name = "ipython" },
-    { name = "levenshtein" },
-    { name = "nltk" },
-    { name = "pandarallel" },
-    { name = "pandas" },
-    { name = "pre-commit" },
-    { name = "ruff" },
-    { name = "scikit-learn" },
-    { name = "seaborn" },
-    { name = "shap" },
-    { name = "tokenizers" },
-    { name = "torch" },
-    { name = "torchinfo" },
-    { name = "tqdm" },
-    { name = "transformers" },
-    { name = "wandb" },
-    { name = "xgboost" },
-    { name = "yapf" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "beartype", specifier = ">=0.22.9" },
-    { name = "colorama", specifier = ">=0.4.6" },
-    { name = "datasets", specifier = ">=4.5.0" },
-    { name = "easydict", specifier = ">=1.13" },
-    { name = "einops", specifier = ">=0.8.2" },
-    { name = "inflection", specifier = ">=0.5.1" },
-    { name = "ipykernel", specifier = ">=7.2.0" },
-    { name = "ipython", specifier = ">=9.10.0" },
-    { name = "levenshtein", specifier = ">=0.27.3" },
-    { name = "nltk", specifier = ">=3.9.2" },
-    { name = "pandarallel", specifier = ">=1.6.5" },
-    { name = "pandas", specifier = ">=3.0.0" },
-    { name = "pre-commit", specifier = ">=4.5.1" },
-    { name = "ruff", specifier = ">=0.15.0" },
-    { name = "scikit-learn", specifier = ">=1.8.0" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "shap", specifier = ">=0.51.0" },
-    { name = "tokenizers", specifier = ">=0.22.2" },
-    { name = "torch", specifier = ">=2.10.0" },
-    { name = "torchinfo", specifier = ">=1.8.0" },
-    { name = "tqdm", specifier = ">=4.67.3" },
-    { name = "transformers", specifier = ">=5.14.1" },
-    { name = "wandb", specifier = ">=0.24.2" },
-    { name = "xgboost", specifier = ">=3.1.1" },
-    { name = "yapf", specifier = ">=0.43.0" },
 ]
 
 [[package]]

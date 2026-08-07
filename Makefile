@@ -9,7 +9,10 @@ format:
 	isort --ls --ds src/
 
 tail:
-	tail -f $(ls -1 slurm-*.out | head -n 1)
+	tail -f `ls -1 slurm-*.out | tail -n 1`
+
+cat:
+	cat `ls -1 slurm-*.out | tail -n 1`
 
 clean:
 	rm -I slurm-*.out
