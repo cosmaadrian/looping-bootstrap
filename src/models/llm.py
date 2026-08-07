@@ -85,6 +85,16 @@ class TransformerDecoder(nn.Module):
         for _ in range(num_steps_with_grad):
             outputs = self.model(outputs, mask = attention_mask, causal_mask = True)
 
+        if torch.is_grad_enabled() and not num_steps_with_grad:
+            # A fully truncated recurrent pass intentionally has no autograd
+            # path through self.model. Give DDP zero gradients for those
+            # parameters so its reducer can still finish the iteration.
+            recurrent_parameter_anchor = sum(
+                (parameter.sum() * 0 for parameter in self.model.parameters() if parameter.requires_grad),
+                outputs.new_zeros(()),
+            )
+            outputs = outputs + recurrent_parameter_anchor
+
         return outputs
 
     def forward(self, batch, **kwargs):
