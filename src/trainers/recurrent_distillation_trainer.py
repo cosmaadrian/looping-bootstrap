@@ -12,6 +12,7 @@ class RecurrentDistillationTrainer(LMTrainer):
 
         self.recurrent_distillation = bool(args.recurrent_distillation)
         self.mean_recurrence = int(args.model_args.mean_recurrence)
+        self.mean_backprop_depth = int(args.model_args.mean_backprop_depth)
         self.max_student_depth = 2 * self.mean_recurrence - 1
         self.teacher_depth_multiplier = int(args.teacher_depth_multiplier)
         self.distillation_weight = float(args.distillation_weight)
@@ -20,6 +21,8 @@ class RecurrentDistillationTrainer(LMTrainer):
 
         if self.mean_recurrence < 1:
             raise ValueError('mean_recurrence must be at least 1')
+        if self.mean_backprop_depth < 1:
+            raise ValueError('mean_backprop_depth must be at least 1')
         if self.teacher_depth_multiplier < 1:
             raise ValueError('teacher_depth_multiplier must be at least 1')
         if self.distillation_weight < 0:
@@ -39,7 +42,7 @@ class RecurrentDistillationTrainer(LMTrainer):
         ).item()
 
     def _forward_at_depth(self, batch, depth):
-        grad_depth = min(depth, int(self.args.model_args.mean_backprop_depth))
+        grad_depth = min(depth + 1, self.mean_backprop_depth + 1)
         return self.model({
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
