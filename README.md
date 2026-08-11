@@ -17,8 +17,11 @@ NUM_GPUS=1 ENV_NAME=fep ./src/experiments/run_pretraining.sh
 
 `src/configs/pretraining-config.yaml` selects `recurrent_distillation_trainer`.
 Each batch samples a student depth uniformly from 1 through
-`2 * mean_recurrence - 1`, adds a uniformly sampled teacher-depth offset from
-the configured inclusive range, and combines next-token cross-entropy with
+`2 * mean_recurrence - 1`. With `teacher_depth_mode: additive`, it adds a
+uniformly sampled teacher-depth offset from the configured inclusive range.
+With `teacher_depth_mode: multiplicative`, it instead computes
+`teacher_depth = teacher_depth_multiplier * student_depth`; the multiplier must
+be an integer of at least 2. The loss combines next-token cross-entropy with
 temperature-scaled teacher-to-student KL divergence. The teacher is a separate,
 frozen copy of the model whose weights are updated after every student optimizer
 step as `teacher = teacher_momentum * teacher + (1 - teacher_momentum) * student`.

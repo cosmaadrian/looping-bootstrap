@@ -8,8 +8,10 @@ batch_size: 32
 trainer: recurrent_distillation_trainer
 recurrent_distillation: 1
 teacher_momentum: 0.999 # EMA coefficient for teacher weights
+teacher_depth_mode: additive # additive or multiplicative
 teacher_depth_offset_min: 2
 teacher_depth_offset_max: 6
+teacher_depth_multiplier: 2 # K in teacher_depth = K * student_depth
 distillation_weight: 0.5
 temperature: 1.0
 anchor_all_depths: 1
