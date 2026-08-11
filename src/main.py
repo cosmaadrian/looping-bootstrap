@@ -1,3 +1,5 @@
+import copy
+
 import torch
 
 torch.set_float32_matmul_precision('medium')
@@ -70,6 +72,13 @@ base_architecture = nomenclature.MODELS[args.model](arg_copy)
 accelerator.master_print('🖥️🖥️🖥️ Computing Base Shapes (muP) 🖥️🖥️🖥️\n')
 compute_and_set_base_shapes(model = architecture, base = base_architecture)
 
+# The recurrent-distillation teacher is kept outside DDP and the optimizer.
+# Copy it before preparing the student so torch.compile/DDP wrappers are not
+# duplicated. The trainer synchronizes the copy with the prepared student.
+teacher_architecture = None
+if args.trainer == 'recurrent_distillation_trainer' and bool(args.recurrent_distillation):
+    teacher_architecture = copy.deepcopy(architecture)
+
 # remove the base_architecture, only needed the shapes
 num_params_base = sum(p.numel() for p in base_architecture.parameters() if p.requires_grad)
 del base_architecture
@@ -84,7 +93,11 @@ accelerator.master_print(f"::: Model has {num_params/1e9:.2f} billion parameters
 accelerator.master_print(f"::: Base model has {num_params_base/1e9:.2f} billion parameters.")
 
 train_dataloader = nomenclature.DATASETS[args.dataset].train_dataloader(args)
-model = nomenclature.TRAINERS[args.trainer](args, architecture)
+trainer_class = nomenclature.TRAINERS[args.trainer]
+if teacher_architecture is None:
+    model = trainer_class(args, architecture)
+else:
+    model = trainer_class(args, architecture, teacher_model = teacher_architecture)
 
 # train for a constant amount of tokens, accounting for n_repetitions.
 # args.n_train_iters = len(train_dataloader.dataset) * args.dataset_args.num_repetitions // (args.batch_size * accelerator.world_size)

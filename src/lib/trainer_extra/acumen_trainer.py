@@ -37,6 +37,10 @@ class AcumenTrainer(object):
     def training_batch_end(self, batch = None):
         pass
 
+    def optimizer_step_end(self):
+        """Run work that must happen once after each successful optimizer step."""
+        pass
+
     def training_epoch_start(self, epoch = None):
         pass
 
@@ -44,4 +48,10 @@ class AcumenTrainer(object):
         pass
 
     def training_start(self):
+        pass
+
+    def get_checkpoint_state(self):
+        return {}
+
+    def load_checkpoint_state(self, state_dict):
         pass

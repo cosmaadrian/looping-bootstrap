@@ -126,6 +126,7 @@ class ModelCheckpoint(Callback):
                 # random states
                 'random_state': random_states,
             }
+            state_dict.update(self.trainer.model.get_checkpoint_state())
 
             torch.save(state_dict, path + '.ckpt')
 

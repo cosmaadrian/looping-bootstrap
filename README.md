@@ -19,8 +19,14 @@ NUM_GPUS=1 ENV_NAME=fep ./src/experiments/run_pretraining.sh
 Each batch samples a student depth uniformly from 1 through
 `2 * mean_recurrence - 1`, adds a uniformly sampled teacher-depth offset from
 the configured inclusive range, and combines next-token cross-entropy with
-temperature-scaled teacher-to-student KL divergence. The default offsets of
-2 through 4 give teacher depths from 3 through 11 when `mean_recurrence` is 4.
+temperature-scaled teacher-to-student KL divergence. The teacher is a separate,
+frozen copy of the model whose weights are updated after every student optimizer
+step as `teacher = teacher_momentum * teacher + (1 - teacher_momentum) * student`.
+`teacher_momentum` must be in `[0, 1)`; setting it to `0` keeps the teacher
+weights equal to the student weights, while values close to `1` produce a
+slower-moving teacher. The pretraining config uses `0.999`. The default offsets
+of 2 through 6 give teacher depths from 3 through 13 when `mean_recurrence` is
+4.
 
 The recurrent-distillation evaluator is independent of the training-time
 teacher schedule. It evaluates the default reference depths of 1, 2, 4, and 8

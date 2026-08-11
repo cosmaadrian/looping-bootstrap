@@ -1,3 +1,5 @@
+import copy
+
 import torch
 import torch.nn.functional as F
 
@@ -7,10 +9,12 @@ from .lm_trainer import LMTrainer
 class RecurrentDistillationTrainer(LMTrainer):
     """Train a sampled recurrent depth from a deeper, detached prediction."""
 
-    def __init__(self, args, model):
+    def __init__(self, args, model, teacher_model = None):
         super().__init__(args, model)
 
+        self.student_model = model
         self.recurrent_distillation = bool(args.recurrent_distillation)
+        self.teacher_momentum = float(args.get('teacher_momentum', 0.0))
         self.mean_recurrence = int(args.model_args.mean_recurrence)
         self.mean_backprop_depth = int(args.model_args.mean_backprop_depth)
         self.max_student_depth = 2 * self.mean_recurrence - 1
@@ -32,6 +36,90 @@ class RecurrentDistillationTrainer(LMTrainer):
             raise ValueError('distillation_weight must be non-negative')
         if self.temperature <= 0:
             raise ValueError('temperature must be greater than zero')
+        if not 0 <= self.teacher_momentum < 1:
+            raise ValueError('teacher_momentum must be in the interval [0, 1)')
+
+        self.teacher_model = None
+        if self.recurrent_distillation:
+            if teacher_model is None:
+                # This fallback keeps direct construction useful in tests and
+                # other entry points. main.py supplies a pre-DDP copy.
+                teacher_model = copy.deepcopy(self._unwrap_model(self.student_model))
+
+            self.teacher_model = teacher_model
+            self._copy_student_to_teacher()
+            self.teacher_model.requires_grad_(False)
+            self.teacher_model.eval()
+
+    @staticmethod
+    def _unwrap_model(model):
+        if isinstance(model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
+            model = model.module
+        if hasattr(model, '_orig_mod'):
+            model = model._orig_mod
+        return model
+
+    @torch.no_grad()
+    def _copy_student_to_teacher(self):
+        student_model = self._unwrap_model(self.student_model)
+        student_parameter = next(student_model.parameters(), None)
+        if student_parameter is not None:
+            self.teacher_model.to(student_parameter.device)
+        self.teacher_model.load_state_dict(student_model.state_dict())
+
+    @torch.no_grad()
+    def _update_teacher(self):
+        student_model = self._unwrap_model(self.student_model)
+        student_parameters = dict(student_model.named_parameters())
+        teacher_parameters = dict(self.teacher_model.named_parameters())
+
+        if student_parameters.keys() != teacher_parameters.keys():
+            raise RuntimeError('teacher and student parameters do not match')
+
+        momentum = self.teacher_momentum
+        for name, teacher_parameter in teacher_parameters.items():
+            student_parameter = student_parameters[name].detach()
+            teacher_parameter.mul_(momentum).add_(student_parameter, alpha = 1 - momentum)
+
+        # Keep stateful layers consistent as well. Integer buffers are copied;
+        # floating-point buffers use the same moving average as parameters.
+        student_buffers = dict(student_model.named_buffers())
+        for name, teacher_buffer in self.teacher_model.named_buffers():
+            if name not in student_buffers or teacher_buffer.shape != student_buffers[name].shape:
+                continue
+
+            student_buffer = student_buffers[name].detach()
+            if teacher_buffer.is_floating_point() or teacher_buffer.is_complex():
+                teacher_buffer.mul_(momentum).add_(student_buffer, alpha = 1 - momentum)
+            else:
+                teacher_buffer.copy_(student_buffer)
+
+    def optimizer_step_end(self):
+        if self.teacher_model is not None:
+            self._update_teacher()
+
+    def training_start(self):
+        if self.teacher_model is not None:
+            self.teacher_model.eval()
+
+    def get_checkpoint_state(self):
+        if self.teacher_model is None:
+            return {}
+        return {'teacher_model_state_dict': self.teacher_model.state_dict()}
+
+    def load_checkpoint_state(self, state_dict):
+        if self.teacher_model is None:
+            return
+
+        teacher_state_dict = state_dict.get('teacher_model_state_dict')
+        if teacher_state_dict is None:
+            # Older checkpoints did not store a teacher. Initialize it from the
+            # just-restored student so they remain backwards compatible.
+            self._copy_student_to_teacher()
+            return
+
+        self.teacher_model.load_state_dict(teacher_state_dict)
+        self.teacher_model.eval()
 
     def _sample_depths(self, batch_idx):
         # Use one CPU generator so every DDP rank samples the same depth pair.
@@ -51,10 +139,11 @@ class RecurrentDistillationTrainer(LMTrainer):
         ).item()
         return student_depth, student_depth + teacher_offset
 
-    def _forward_at_depth(self, batch, depth):
+    def _forward_at_depth(self, batch, depth, model = None):
         grad_depth = min(depth, self.mean_backprop_depth)
+        model = self.student_model if model is None else model
 
-        return self.model({
+        return model({
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
             'num_steps_pair': (depth - grad_depth + 1, grad_depth + 1),
@@ -114,7 +203,11 @@ class RecurrentDistillationTrainer(LMTrainer):
 
         if self.recurrent_distillation:
             with torch.no_grad():
-                teacher_logits = self._forward_at_depth(batch, teacher_depth)
+                teacher_logits = self._forward_at_depth(
+                    batch,
+                    teacher_depth,
+                    model = self.teacher_model,
+                )
                 teacher_loss = self.next_token_prediction_loss(
                     teacher_logits.view(-1, teacher_logits.size(-1)),
                     labels.view(-1),

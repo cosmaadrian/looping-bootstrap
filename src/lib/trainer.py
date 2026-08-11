@@ -104,6 +104,7 @@ class NotALightningTrainer():
         if self.state_dict is not None:
             self.scaler.load_state_dict(self.state_dict['scaler_state_dict'])
             model.model.load_state_dict(self.state_dict['model_state_dict'])
+            model.load_checkpoint_state(self.state_dict)
 
         if self.accelerator.is_distributed:
             dist.barrier()
@@ -205,9 +206,17 @@ class NotALightningTrainer():
                 if bool(self.args.clip_grad_norm):
                     torch.nn.utils.clip_grad_norm_(self.model_hook.parameters(), self.args.max_grad_norm)
 
+                scale_before_step = self.scaler.get_scale()
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
                 self.optimizer.zero_grad(set_to_none = True)
+
+                # GradScaler lowers the scale when it skips an optimizer step
+                # because of non-finite gradients. Keep post-step state such as
+                # an EMA teacher aligned only with real student updates.
+                optimizer_step_succeeded = self.scaler.get_scale() >= scale_before_step
+                if optimizer_step_succeeded:
+                    model.optimizer_step_end()
 
                 if self.accelerator.is_distributed:
                     dist.barrier()
