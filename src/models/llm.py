@@ -70,20 +70,38 @@ class TransformerDecoder(nn.Module):
         )
 
     @torch.compiler.disable
-    def loop_layers(self, embeddings, attention_mask, num_steps_pair):
+    def loop_layers(self, embeddings, attention_mask, num_steps_pair, intended_num_loops = None):
         num_steps_no_grad, num_steps_with_grad = map(int, num_steps_pair)
+        if intended_num_loops is None:
+            intended_num_loops = num_steps_no_grad + num_steps_with_grad
+
+        intended_num_loops = int(intended_num_loops)
+
+        if intended_num_loops < 1:
+            raise ValueError('intended_num_loops must be at least 1')
+
         outputs = embeddings
 
         with torch.no_grad():
             for _ in range(num_steps_no_grad):
-                outputs = self.model(outputs, mask = attention_mask, causal_mask = True)
+                outputs = self.model(
+                    outputs,
+                    mask = attention_mask,
+                    causal_mask = True,
+                    intended_num_loops = intended_num_loops,
+                )
 
         if num_steps_no_grad:
             # Keep embeddings in DDP's graph; TBPTT intentionally makes this gradient zero.
             outputs = outputs + embeddings.sum() * 0
 
         for _ in range(num_steps_with_grad):
-            outputs = self.model(outputs, mask = attention_mask, causal_mask = True)
+            outputs = self.model(
+                outputs,
+                mask = attention_mask,
+                causal_mask = True,
+                intended_num_loops = intended_num_loops,
+            )
 
         if torch.is_grad_enabled() and not num_steps_with_grad:
             # A fully truncated recurrent pass intentionally has no autograd
@@ -97,7 +115,7 @@ class TransformerDecoder(nn.Module):
 
         return outputs
 
-    def forward(self, batch, **kwargs):
+    def forward(self, batch, intended_num_loops = None, **kwargs):
         input_ids = batch['input_ids']
         attention_mask = batch.get('attention_mask', None)
 
@@ -109,8 +127,16 @@ class TransformerDecoder(nn.Module):
         num_loops = batch.get('num_loops', self.args.model_args.get('mean_recurrence', 1))
         num_steps_pair = batch.get('num_steps_pair', (0, num_loops))
 
+        if intended_num_loops is None and 'num_loops' in batch:
+            intended_num_loops = num_loops
+
         outputs = self.pre_transformer(embeddings, mask = attention_mask, causal_mask = True)
-        outputs = self.loop_layers(outputs, attention_mask, num_steps_pair)
+        outputs = self.loop_layers(
+            outputs,
+            attention_mask,
+            num_steps_pair,
+            intended_num_loops = intended_num_loops,
+        )
         outputs = self.post_transformer(outputs, mask = attention_mask, causal_mask = True)
 
         out = self.decoder_out(outputs)

@@ -91,7 +91,7 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
                     'input_ids': batch['input_ids'],
                     'attention_mask': batch['attention_mask'],
                     'num_loops': depth,
-                })
+                }, intended_num_loops = depth)
                 loss_sums[index] += torch.nn.functional.cross_entropy(
                     logits.view(-1, logits.size(-1)),
                     labels.view(-1),

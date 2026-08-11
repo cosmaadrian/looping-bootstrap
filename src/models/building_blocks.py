@@ -268,20 +268,27 @@ class TransformerEncoder(nn.Module):
         causal_mask = True,
         context_mask = None,
         causal_context_mask = None,
+        intended_num_loops = 1,
     ):
+
+        intended_num_loops = int(intended_num_loops)
+        if intended_num_loops < 1:
+            raise ValueError('intended_num_loops must be at least 1')
+
+        residual_scale = intended_num_loops**-0.5
 
         if self.has_context:
             assert context is not None, 'context must be provided if model has context'
 
         for _, (attn, cross_attn, ff) in enumerate(self.layers):
-            x = x + attn(
+            x = x + residual_scale * attn(
                 self.norm(x),
                 mask = mask,
                 causal_mask = causal_mask,
             )
 
             if self.has_context and cross_attn is not None:
-                x = x + cross_attn(self.norm(x), context, mask = mask, context_mask = context_mask, causal_context_mask = causal_context_mask)
-            x = x + ff(self.norm(x))
+                x = x + residual_scale * cross_attn(self.norm(x), context, mask = mask, context_mask = context_mask, causal_context_mask = causal_context_mask)
+            x = x + residual_scale * ff(self.norm(x))
 
         return x

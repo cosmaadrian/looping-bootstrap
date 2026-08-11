@@ -147,7 +147,7 @@ class RecurrentDistillationTrainer(LMTrainer):
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
             'num_steps_pair': (depth - grad_depth + 1, grad_depth + 1),
-        })
+        }, intended_num_loops = depth)
 
     def _distillation_loss(self, student_logits, teacher_logits, labels):
         valid_tokens = labels.ne(-100)

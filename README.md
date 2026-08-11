@@ -31,3 +31,8 @@ of 2 through 6 give teacher depths from 3 through 13 when `mean_recurrence` is
 The recurrent-distillation evaluator is independent of the training-time
 teacher schedule. It evaluates the default reference depths of 1, 2, 4, and 8
 loops, or the explicitly configured evaluation depths.
+
+Within the recurrent stack, every attention and feed-forward residual update
+is scaled by `1 / sqrt(intended_num_loops)`. Student and teacher forwards pass
+their own intended depths, so each receives the scale corresponding to its own
+loop horizon. The pre- and post-transformer blocks remain unscaled.

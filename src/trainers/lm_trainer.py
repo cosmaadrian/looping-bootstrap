@@ -63,12 +63,14 @@ class LMTrainer(AcumenTrainer):
         self.iter_idx += 1
         input_ids = batch['input_ids']
         labels = batch['labels']
+        num_steps_pair = self._sample_loop_steps(batch_idx)
+        intended_num_loops = int(num_steps_pair.sum().item())
 
         model_output = self.model({
             'input_ids': input_ids,
             'attention_mask': batch['attention_mask'],
-            'num_steps_pair': self._sample_loop_steps(batch_idx),
-        })
+            'num_steps_pair': num_steps_pair,
+        }, intended_num_loops = intended_num_loops)
 
         next_token_loss = self.next_token_prediction_loss(model_output.view(-1, model_output.size(-1)), labels.view(-1))
 
