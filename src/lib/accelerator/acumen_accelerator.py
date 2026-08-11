@@ -75,12 +75,15 @@ class AcumenAccelerator:
 
             model = model.to(device)
 
-            ddp_kwargs = {}
+            ddp_kwargs = {
+                'find_unused_parameters': True
+            }
+
             if device_name == 'cuda':
-                ddp_kwargs = {
+                ddp_kwargs.update({
                     'device_ids': [self.local_rank],
                     'output_device': self.local_rank,
-                }
+                })
 
             model = torch.nn.parallel.DistributedDataParallel(model, **ddp_kwargs)
             print(f"💥 Using DDP with local rank {self.local_rank} ...")

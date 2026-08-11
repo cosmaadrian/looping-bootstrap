@@ -14,7 +14,7 @@ export NUM_GPUS="${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-1}}"
 ###########################################################################
 
 cd "src/"
-ARGS=(--config_file ./configs/pretraining-config.yaml --group test --env "$ENV_NAME" --debug 0 --name test-pretrain)
+ARGS=(--config_file ./configs/pretraining-config.yaml --group test3 --env "$ENV_NAME" --debug 0 --name test-pretrain)
 
 ######################################################################################################
 ##################################### VANILLA #######################################################
