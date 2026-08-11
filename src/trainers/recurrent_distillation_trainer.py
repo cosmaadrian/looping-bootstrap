@@ -115,9 +115,14 @@ class RecurrentDistillationTrainer(LMTrainer):
         if self.recurrent_distillation:
             with torch.no_grad():
                 teacher_logits = self._forward_at_depth(batch, teacher_depth)
+                teacher_loss = self.next_token_prediction_loss(
+                    teacher_logits.view(-1, teacher_logits.size(-1)),
+                    labels.view(-1),
+                )
             teacher_logits = teacher_logits.detach()
             distillation_loss = self._distillation_loss(student_logits, teacher_logits, labels)
         else:
+            teacher_loss = None
             distillation_loss = student_logits.new_zeros(())
 
         # With the default anchor_all_depths=true, every sampled student is
@@ -134,6 +139,13 @@ class RecurrentDistillationTrainer(LMTrainer):
                 on_step = False,
                 force_log = True
             )
+            if teacher_loss is not None:
+                self.log(
+                    'train/loss:teacher',
+                    teacher_loss.item(),
+                    on_step = False,
+                    force_log = True
+                )
             self.log(
                 'train/loss:distillation',
                 distillation_loss.item(),
