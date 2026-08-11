@@ -63,6 +63,26 @@ class RecurrentDistillationTrainer(LMTrainer):
         valid_tokens = labels.ne(-100)
         student_logits = student_logits[valid_tokens]
         teacher_logits = teacher_logits[valid_tokens]
+        labels = labels[valid_tokens]
+
+        if student_logits.numel() == 0:
+            return student_logits.sum()
+
+        with torch.no_grad():
+            student_token_losses = F.cross_entropy(
+                student_logits.float(),
+                labels,
+                reduction = 'none',
+            )
+            teacher_token_losses = F.cross_entropy(
+                teacher_logits.float(),
+                labels,
+                reduction = 'none',
+            )
+            teacher_is_better = teacher_token_losses < student_token_losses
+
+        student_logits = student_logits[teacher_is_better]
+        teacher_logits = teacher_logits[teacher_is_better]
 
         if student_logits.numel() == 0:
             return student_logits.sum()
