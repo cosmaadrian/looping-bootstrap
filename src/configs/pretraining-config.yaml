@@ -16,6 +16,13 @@ distillation_weight: 0.5
 temperature: 1.0
 anchor_all_depths: 1
 
+# Width–Depth μP. This run's mean_recurrence is the base depth, hence D=1.
+# Scale depth_multiplier with both num_layers and mean_recurrence when either
+# differs from the base run. alpha may range from 0.5 through 1.0.
+depth_alpha_enabled: 1
+depth_multiplier: 1.0
+depth_alpha_exp: 1.0
+
 input_tokenizer:
   vocab_size: 50257
   path: openai-community/gpt2

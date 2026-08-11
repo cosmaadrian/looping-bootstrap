@@ -3,6 +3,79 @@ import torch.nn as nn
 from torch.nn import Linear
 
 
+def _depth_mup_config(args):
+    enabled = bool(args.get('depth_alpha_enabled', False))
+    depth_multiplier = float(args.get('depth_multiplier', 1.0))
+    depth_alpha_exp = float(args.get('depth_alpha_exp', 1.0))
+
+    if enabled:
+        if depth_multiplier <= 0:
+            raise ValueError('depth_multiplier must be positive')
+        if not 0.5 <= depth_alpha_exp <= 1.0:
+            raise ValueError('depth_alpha_exp must be between 0.5 and 1.0')
+
+    return enabled, depth_multiplier, depth_alpha_exp
+
+
+def depth_mup_residual_scale(args, intended_num_loops):
+    """Return the Width–Depth μP residual multiplier for one forward.
+
+    ``depth_multiplier`` describes the configured mean recurrent depth relative
+    to the base model. A sampled forward is additionally corrected by its loop
+    count relative to ``mean_recurrence``.
+    """
+    intended_num_loops = int(intended_num_loops)
+    if intended_num_loops < 1:
+        raise ValueError('intended_num_loops must be at least 1')
+
+    enabled, depth_multiplier, depth_alpha_exp = _depth_mup_config(args)
+    if not enabled:
+        return 1.0
+
+    mean_recurrence = float(args.model_args.get('mean_recurrence', 1))
+    if mean_recurrence <= 0:
+        raise ValueError('mean_recurrence must be positive when depth μP is enabled')
+
+    forward_depth_multiplier = depth_multiplier * intended_num_loops / mean_recurrence
+    return forward_depth_multiplier**(-depth_alpha_exp)
+
+
+def configure_depth_mup_parameters(module, depth_scaled_module, args):
+    """Attach Width–Depth μP optimizer metadata to model parameters."""
+    enabled, depth_multiplier, depth_alpha_exp = _depth_mup_config(args)
+
+    for parameter in module.parameters():
+        parameter._depth_mup_enabled = enabled
+        parameter._depth_mup_scaled = False
+        parameter._depth_mup_multiplier = depth_multiplier
+        parameter._depth_mup_alpha = depth_alpha_exp
+
+    if enabled:
+        for parameter in depth_scaled_module.parameters():
+            parameter._depth_mup_scaled = True
+
+
+def depth_mup_parameter_scales(parameter):
+    """Return Width–Depth μP learning-rate and Adam-epsilon scales."""
+    if not getattr(parameter, '_depth_mup_enabled', False):
+        return 1.0, 1.0
+
+    width_multiplier = parameter.infshape.width_mult()
+    if width_multiplier <= 0:
+        raise ValueError('width multiplier must be positive')
+
+    epsilon_scale = 1 / width_multiplier
+    learning_rate_scale = 1.0
+
+    if getattr(parameter, '_depth_mup_scaled', False):
+        depth_multiplier = parameter._depth_mup_multiplier
+        depth_alpha_exp = parameter._depth_mup_alpha
+        learning_rate_scale = depth_multiplier**(depth_alpha_exp - 1)
+        epsilon_scale *= depth_multiplier**(-depth_alpha_exp)
+
+    return learning_rate_scale, epsilon_scale
+
+
 def print_mask(mask):
     mask = mask.clone()
     mask = mask * -1

@@ -35,7 +35,23 @@ The recurrent-distillation evaluator is independent of the training-time
 teacher schedule. It evaluates the default reference depths of 1, 2, 4, and 8
 loops, or the explicitly configured evaluation depths.
 
-Within the recurrent stack, every attention and feed-forward residual update
-is scaled by `1 / sqrt(intended_num_loops)`. Student and teacher forwards pass
-their own intended depths, so each receives the scale corresponding to its own
-loop horizon. The pre- and post-transformer blocks remain unscaled.
+## Width–Depth μP
+
+The recurrent stack implements the parameterization from
+[Width–Depth μP](https://github.com/ML-GSAI/Width-Depth-muP). Enable it with
+`depth_alpha_enabled: 1`, set `depth_multiplier` to the nominal effective depth
+divided by the base effective depth, and choose `depth_alpha_exp` in `[0.5, 1]`.
+The reference experiments use `depth_alpha_exp: 1.0`.
+
+For a run whose mean recurrence and layer count match the base model,
+`depth_multiplier` is `1`. If only `mean_recurrence` grows from 4 to 8, use
+`depth_multiplier: 2`; if `num_layers` also grows from 4 to 8, use `4`.
+
+For a sampled forward with depth `l`, nominal mean recurrence `L`, configured
+depth multiplier `D`, and exponent `alpha`, every recurrent attention and
+feed-forward update is scaled by `(D * l / L)^(-alpha)`. Student and teacher
+therefore use their own intended depths. The optimizer applies the corresponding
+`D^(alpha - 1)` learning-rate correction to recurrent parameters and the
+reference Adam epsilon corrections. Embeddings, pre/post blocks, and the readout
+remain outside the depth learning-rate correction. Setting
+`depth_alpha_enabled: 0` retains width-only μP.

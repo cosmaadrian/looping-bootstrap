@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .utils import MuReadout
+from .utils import MuReadout, configure_depth_mup_parameters
 from .building_blocks import TransformerEncoder
 
 
@@ -61,6 +61,7 @@ class TransformerDecoder(nn.Module):
             dropout = self.args.model_args.dropout,
             attn_dropout = self.args.model_args.attn_dropout,
             has_context = False,
+            depth_scaled = True,
         )
 
         self.decoder_out = MuReadout(
@@ -68,6 +69,10 @@ class TransformerDecoder(nn.Module):
             out_features = self.token_vocab_size,
             args = args,
         )
+
+        # Only the recurrent stack grows with the modeled depth. The embedding,
+        # pre/post blocks, and readout retain their base optimizer scaling.
+        configure_depth_mup_parameters(self, self.model, self.args)
 
     @torch.compiler.disable
     def loop_layers(self, embeddings, attention_mask, num_steps_pair, intended_num_loops = None):

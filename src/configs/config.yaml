@@ -53,7 +53,12 @@ model_args:
 ####################################################
 
 model_width_multiplier: 1.0
-char_model_width_multiplier: 0.5
+
+# Width–Depth μP. depth_multiplier is the nominal effective depth divided by
+# the base effective depth; keep this disabled for standard width-only μP.
+depth_alpha_enabled: 0
+depth_multiplier: 1.0
+depth_alpha_exp: 1.0
 
 ####################################################
 ####################################################

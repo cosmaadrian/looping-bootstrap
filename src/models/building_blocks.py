@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 from .rope import RotaryEmbedding
 from einops import rearrange
-from .utils import RMSNorm, init_method_normal
+from .utils import RMSNorm, depth_mup_residual_scale, init_method_normal
 from torch.nn.init import constant_
 
 
@@ -212,9 +212,11 @@ class TransformerEncoder(nn.Module):
         cross_attn_dropout = 0.,
         has_context = False,
         context_position = None,
+        depth_scaled = False,
     ):
         super().__init__()
         self.args = args
+        self.depth_scaled = depth_scaled
 
         self.has_context = has_context
         self.gaussian_noise = gaussian_noise
@@ -272,10 +274,7 @@ class TransformerEncoder(nn.Module):
     ):
 
         intended_num_loops = int(intended_num_loops)
-        if intended_num_loops < 1:
-            raise ValueError('intended_num_loops must be at least 1')
-
-        residual_scale = intended_num_loops**-0.5
+        residual_scale = depth_mup_residual_scale(self.args, intended_num_loops) if self.depth_scaled else 1.0
 
         if self.has_context:
             assert context is not None, 'context must be provided if model has context'

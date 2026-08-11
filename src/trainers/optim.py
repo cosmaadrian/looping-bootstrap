@@ -21,6 +21,7 @@ See Appendix B in our paper for discussions of other optimizers.
 '''
 from collections import defaultdict
 from torch.optim import SGD, Adam, AdamW
+from models.utils import depth_mup_parameter_scales
 
 
 def process_param_groups(params, **kwargs):
@@ -51,8 +52,11 @@ def MuAdam(params, impl = Adam, decoupled_wd = False, **kwargs):
         An instance of `impl` with refined parameter groups, each of which has the correctly
         scaled learning rate according to mup.
     '''
+    param_groups = process_param_groups(params, **kwargs)
+    depth_mup_enabled = any(getattr(p, '_depth_mup_enabled', False) for param_group in param_groups for p in param_group['params'])
+
     new_param_groups = []
-    for param_group in process_param_groups(params, **kwargs):
+    for param_group in param_groups:
         # For every existing param group, we split into several new groups
         def new_group():
             new_g = {k: v for k, v in param_group.items() if k != 'params'}
@@ -61,23 +65,40 @@ def MuAdam(params, impl = Adam, decoupled_wd = False, **kwargs):
 
         # The matrix-like weights might need multiple groups since weights
         # might have different width multipliers
-        matrix_like_p = defaultdict(new_group)  # key is width_mult
-        vector_like_p = new_group()
+        matrix_like_p = defaultdict(new_group)  # key is width/depth scaling
+        vector_like_p = defaultdict(new_group) if depth_mup_enabled else new_group()
         for p in param_group['params']:
             assert hasattr(p, 'infshape'), (f'A parameter with shape {p.shape} does not have `infshape` attribute. '
                                             'Did you forget to call `mup.set_base_shapes` on the model?')
             if p.infshape.ninf() == 2:
-                matrix_like_p[p.infshape.width_mult()]['params'].append(p)
+                width_mult = p.infshape.width_mult()
+                lr_scale, eps_scale = depth_mup_parameter_scales(p)
+                matrix_like_p[(width_mult, lr_scale, eps_scale)]['params'].append(p)
             elif p.infshape.ninf() > 2:
                 raise NotImplementedError('more than 2 inf dimensions')
             else:
-                vector_like_p['params'].append(p)
-        for width_mult, group in matrix_like_p.items():
+                if depth_mup_enabled:
+                    lr_scale, eps_scale = depth_mup_parameter_scales(p)
+                    vector_like_p[(lr_scale, eps_scale)]['params'].append(p)
+                else:
+                    vector_like_p['params'].append(p)
+        for (width_mult, lr_scale, eps_scale), group in matrix_like_p.items():
             # Scale learning rate and weight decay accordingly
-            group['lr'] /= width_mult
+            group['lr'] *= lr_scale / width_mult
             if not decoupled_wd:
                 group['weight_decay'] *= width_mult
-        new_param_groups.extend(list(matrix_like_p.values()) + [vector_like_p])
+            if depth_mup_enabled:
+                group['eps'] = group.get('eps', kwargs.get('eps', 1e-8)) * eps_scale
+
+        if depth_mup_enabled:
+            for (lr_scale, eps_scale), group in vector_like_p.items():
+                group['lr'] *= lr_scale
+                group['eps'] = group.get('eps', kwargs.get('eps', 1e-8)) * eps_scale
+            vector_groups = list(vector_like_p.values())
+        else:
+            vector_groups = [vector_like_p]
+
+        new_param_groups.extend(list(matrix_like_p.values()) + vector_groups)
     return impl(new_param_groups, **kwargs)
 
 
