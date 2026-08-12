@@ -11,7 +11,7 @@ from .pretraining_evaluator import PretrainingEvaluator
 class RecurrentDistillationEvaluator(PretrainingEvaluator):
     """Evaluate recurrent depths and compare the run with its initial generation."""
 
-    DEFAULT_DEPTHS = (1, 2, 4, 8)
+    DEFAULT_DEPTHS = (1, 2, 4, 8, 16)
     tracks_recurrent_generations = True
 
     def __init__(self, args, model, evaluator_args, logger = None):
@@ -27,14 +27,13 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
 
         self._generation_zero = None
 
-    def _reduce_totals(self, loss_sums, correct_sums, num_tokens, counter):
+    def _reduce_totals(self, loss_sums, num_tokens, counter):
         if not self.accelerator.is_distributed:
-            return loss_sums, correct_sums, num_tokens, counter
+            return loss_sums, num_tokens, counter
 
         dist.barrier()
         totals = torch.cat([
             loss_sums,
-            correct_sums,
             num_tokens.view(1),
             counter.view(1),
         ])
@@ -42,12 +41,11 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
 
         num_depths = len(self.depths)
         loss_sums = totals[:num_depths]
-        correct_sums = totals[num_depths:2 * num_depths]
         num_tokens = totals[-2]
         counter = totals[-1]
-        return loss_sums, correct_sums, num_tokens, counter
+        return loss_sums, num_tokens, counter
 
-    def _metrics(self, losses, accuracies):
+    def _metrics(self, losses):
         metrics = []
         for index, depth in enumerate(self.depths):
             metrics.extend([
@@ -65,7 +63,6 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
     def trainer_evaluate(self, global_step = -1):
         num_depths = len(self.depths)
         loss_sums = torch.zeros(num_depths, device = self.device, dtype = torch.float64)
-        correct_sums = torch.zeros(num_depths, device = self.device, dtype = torch.float64)
         num_tokens = torch.zeros((), device = self.device, dtype = torch.float64)
         counter = torch.zeros((), device = self.device, dtype = torch.float64)
 
@@ -98,12 +95,9 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
                     ignore_index = -100,
                     reduction = 'sum',
                 ).double()
-                predictions = logits.argmax(dim = -1)
-                correct_sums[index] += predictions[valid_tokens].eq(labels[valid_tokens]).sum()
 
-        loss_sums, correct_sums, num_tokens, counter = self._reduce_totals(
+        loss_sums, num_tokens, counter = self._reduce_totals(
             loss_sums,
-            correct_sums,
             num_tokens,
             counter,
         )
@@ -114,12 +108,11 @@ class RecurrentDistillationEvaluator(PretrainingEvaluator):
             raise ValueError('recurrent depth evaluation received no supervised tokens')
 
         losses = (loss_sums / num_tokens).tolist()
-        accuracies = (correct_sums / num_tokens).tolist()
         rendered_losses = ', '.join(f'{depth}: {loss:.4f}' for depth, loss in zip(self.depths, losses))
         print(f'::: [{self.display_name} - {AcumenAccelerator().local_rank}] '
               f'Evaluated {int(counter.item()) // self.accelerator.world_size} batches; '
               f'loss by loops: {rendered_losses} :::')
-        return self._metrics(losses, accuracies)
+        return self._metrics(losses)
 
     @torch.no_grad()
     def evaluate(self, global_step = -1):
