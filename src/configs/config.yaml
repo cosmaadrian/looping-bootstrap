@@ -5,8 +5,8 @@ run_id: 1
 
 accumulation_steps: 1
 slurm_job_id: "0"
-clip_grad_norm: 1
-max_grad_norm: 1.5
+clip_grad_norm: 1.0
+max_grad_norm: 1.0
 
 resume_from: ""
 
@@ -67,7 +67,7 @@ depth_alpha_exp: 1.0
 optimizer_args:
   beta1: 0.9
   beta2: 0.95
-  eps: 1e-10
+  eps: 1e-7
   weight_decay: 0.01
 
 scheduler_args:

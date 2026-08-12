@@ -87,6 +87,9 @@ class TransformerDecoder(nn.Module):
 
         outputs = embeddings
 
+        initial_state = torch.randn_like(embeddings) * 0.05
+        outputs = outputs + initial_state
+
         with torch.no_grad():
             for _ in range(num_steps_no_grad):
                 outputs = self.model(

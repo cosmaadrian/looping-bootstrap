@@ -175,12 +175,12 @@ class RecurrentDistillationTrainer(LMTrainer):
             student_token_losses = F.cross_entropy(
                 student_logits.float(),
                 labels,
-                reduction = 'none',
+                reduction = 'none'
             )
             teacher_token_losses = F.cross_entropy(
                 teacher_logits.float(),
                 labels,
-                reduction = 'none',
+                reduction = 'none'
             )
             teacher_is_better = teacher_token_losses < student_token_losses
 
@@ -191,14 +191,14 @@ class RecurrentDistillationTrainer(LMTrainer):
             return student_logits.sum()
 
         temperature = self.temperature
-        student_log_probs = F.log_softmax(student_logits.float() / temperature, dim = -1)
+        student_log_probs = F.log_softmax(student_logits.float(), dim = -1)
         teacher_probs = F.softmax(teacher_logits.float() / temperature, dim = -1)
 
         return F.kl_div(
             student_log_probs,
             teacher_probs,
             reduction = 'batchmean',
-        ) * temperature**2
+        ) * temperature
 
     def training_step(self, batch, batch_idx):
         self.iter_idx += 1
@@ -239,30 +239,16 @@ class RecurrentDistillationTrainer(LMTrainer):
         total_loss = anchored_next_token_loss + self.distillation_weight * distillation_loss
 
         if self.iter_idx % self.args.log_every == 0:  # prevent doing .item() too often
-            self.log(
-                'train/loss:ntp',
-                next_token_loss.item(),
-                on_step = False,
-                force_log = True
-            )
+            log_dict = {
+                'train/loss:ntp': next_token_loss.item(),
+                'train/loss:distillation': distillation_loss.item(),
+                'train/loss:total': total_loss.item(),
+                'train/student_depth': student_depth,
+            }
             if teacher_loss is not None:
-                self.log(
-                    'train/loss:teacher',
-                    teacher_loss.item(),
-                    on_step = False,
-                    force_log = True
-                )
-            self.log(
-                'train/loss:distillation',
-                distillation_loss.item(),
-                on_step = False,
-                force_log = True
-            )
-            self.log(
-                'train/loss:total',
-                total_loss.item(),
-                on_step = False,
-                force_log = True
-            )
+                log_dict['train/loss:teacher'] = teacher_loss.item()
+                log_dict['train/teacher_depth'] = teacher_depth
+
+            self.log_dict(log_dict, on_step = False, force_log = True)
 
         return total_loss
