@@ -84,6 +84,7 @@ class NotALightningTrainer():
 
     def fit(self, model, optimizer, train_dataloader, evaluators = None):
         model.log = self.logger.log
+        model.log_dict = self.logger.log_dict
 
         self.evaluators = evaluators
 
