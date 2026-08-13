@@ -123,7 +123,7 @@ class TransformerDecoder(nn.Module):
 
         return outputs
 
-    def forward(self, batch, intended_num_loops = None, **kwargs):
+    def forward(self, batch, intended_num_loops = None, is_teacher = False, **kwargs):
         input_ids = batch['input_ids']
         attention_mask = batch.get('attention_mask', None)
 
@@ -131,6 +131,10 @@ class TransformerDecoder(nn.Module):
             attention_mask = prepare_attention_mask(attention_mask)
 
         embeddings = self.token_embeddings(input_ids)
+
+        if is_teacher and self.args.model_args.noise_std > 0:
+            noise = torch.randn_like(embeddings) * self.args.model_args.noise_std
+            embeddings = embeddings + noise
 
         num_loops = batch.get('num_loops', self.args.model_args.get('mean_recurrence', 1))
         num_steps_pair = batch.get('num_steps_pair', (0, num_loops))

@@ -152,7 +152,7 @@ class RecurrentDistillationTrainer(LMTrainer):
 
         return student_depth, teacher_depth
 
-    def _forward_at_depth(self, batch, depth, model = None):
+    def _forward_at_depth(self, batch, depth, model = None, is_teacher = False):
         grad_depth = min(depth, self.mean_backprop_depth)
         model = self.student_model if model is None else model
 
@@ -160,7 +160,7 @@ class RecurrentDistillationTrainer(LMTrainer):
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
             'num_steps_pair': (depth - grad_depth + 1, grad_depth + 1),
-        }, intended_num_loops = depth)
+        }, intended_num_loops = depth, is_teacher = is_teacher)
 
     def _distillation_loss(self, student_logits, teacher_logits, labels):
         valid_tokens = labels.ne(-100)
@@ -194,11 +194,13 @@ class RecurrentDistillationTrainer(LMTrainer):
         student_log_probs = F.log_softmax(student_logits.float(), dim = -1)
         teacher_probs = F.softmax(teacher_logits.float() / temperature, dim = -1)
 
+        percent_teacher_is_better = 100 * teacher_is_better.sum().item() / labels.numel()
+        
         return F.kl_div(
             student_log_probs,
             teacher_probs,
             reduction = 'batchmean',
-        ) * temperature
+        ) * temperature, percent_teacher_is_better
 
     def training_step(self, batch, batch_idx):
         self.iter_idx += 1
@@ -220,13 +222,14 @@ class RecurrentDistillationTrainer(LMTrainer):
                     batch,
                     teacher_depth,
                     model = self.teacher_model,
+                    is_teacher = True,
                 )
                 teacher_loss = self.next_token_prediction_loss(
                     teacher_logits.view(-1, teacher_logits.size(-1)),
                     labels.view(-1),
                 )
             teacher_logits = teacher_logits.detach()
-            distillation_loss = self._distillation_loss(student_logits, teacher_logits, labels)
+            distillation_loss, percent_teacher_is_better = self._distillation_loss(student_logits, teacher_logits, labels)
         else:
             teacher_loss = None
             distillation_loss = student_logits.new_zeros(())
@@ -237,6 +240,10 @@ class RecurrentDistillationTrainer(LMTrainer):
         use_ce_anchor = self.anchor_all_depths or student_depth == self.max_student_depth
         anchored_next_token_loss = next_token_loss if use_ce_anchor else next_token_loss * 0
         total_loss = anchored_next_token_loss + self.distillation_weight * distillation_loss
+        if self.recurrent_distillation:
+            self.log_dict({
+                'train/perc_teacher_is_better': percent_teacher_is_better,
+            }, on_step = False, force_log = True)
 
         if self.iter_idx % self.args.log_every == 0:  # prevent doing .item() too often
             log_dict = {
