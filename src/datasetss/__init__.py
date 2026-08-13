@@ -1,3 +1,3 @@
-from .pretraining_dataset import PretrainingDataset
+from .pretraining_dataset import DeepMindMathematicsDataset, PretrainingDataset
 
-__all__ = ['PretrainingDataset']
+__all__ = ['DeepMindMathematicsDataset', 'PretrainingDataset']

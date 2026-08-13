@@ -41,6 +41,21 @@ def batch_decode(tokenizer, input_ids):
     return [tokenizer.decode(ids.long().tolist(), skip_special_tokens = True) for ids in input_ids]
 
 
+def _generation_budgets(max_new_tokens, batch_size, device):
+    if torch.is_tensor(max_new_tokens):
+        budgets = max_new_tokens.to(device = device, dtype = torch.long).flatten()
+    elif isinstance(max_new_tokens, (list, tuple)):
+        budgets = torch.tensor(max_new_tokens, device = device, dtype = torch.long)
+    else:
+        budgets = torch.full((batch_size, ), int(max_new_tokens), device = device, dtype = torch.long)
+
+    if budgets.numel() != batch_size:
+        raise ValueError(f'Expected {batch_size} generation budgets, received {budgets.numel()}.')
+    if torch.any(budgets < 0):
+        raise ValueError('max_new_tokens must be non-negative.')
+    return budgets
+
+
 def generate(
     model,
     input_ids,
@@ -50,54 +65,84 @@ def generate(
     temperature = 1.0,
     top_p = 0.95,
     stop_on_eos = True,
+    model_kwargs = None,
+    forward_kwargs = None,
 ):
-    pad_id = 2
-
     B = input_ids.shape[0]
     device = input_ids.device
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = tokenizer.eos_token_id
+    if pad_id is None:
+        raise ValueError('Generation requires a tokenizer pad or EOS token.')
+    pad_id = int(pad_id)
 
-    answer = torch.full((B, max_new_tokens), pad_id, dtype = torch.long, device = device)
-    attention_mask_answer = torch.zeros((B, max_new_tokens), dtype = torch.long, device = device)
+    budgets = _generation_budgets(max_new_tokens, B, device)
+    max_steps = int(budgets.max().item()) if B else 0
+    model_kwargs = {} if model_kwargs is None else dict(model_kwargs)
+    forward_kwargs = {} if forward_kwargs is None else dict(forward_kwargs)
 
-    input_ids = F.pad(input_ids.detach().clone(), (0, max_new_tokens), 'constant', pad_id)
-    attention_mask = F.pad(attention_mask.detach().clone(), (0, max_new_tokens), 'constant', 0)
+    answer = torch.full((B, max_steps), pad_id, dtype = torch.long, device = device)
+    attention_mask_answer = torch.zeros((B, max_steps), dtype = torch.long, device = device)
 
-    is_eos = torch.zeros((B, 1), dtype = torch.bool, device = device)
+    input_ids = F.pad(input_ids.detach().clone(), (0, max_steps), 'constant', pad_id)
+    attention_mask = F.pad(attention_mask.detach().clone(), (0, max_steps), 'constant', 0)
 
-    for i in range(max_new_tokens):
-        idxs = attention_mask.sum(dim = 1) - 1
-        batch_indices = torch.arange(B, device = device)
+    if B:
+        positions = torch.arange(attention_mask.shape[1], device = device).unsqueeze(0).expand(B, -1)
+        last_positions = positions.masked_fill(attention_mask == 0, -1).max(dim = 1).values
+        if torch.any(last_positions < 0):
+            raise ValueError('Every generation prompt must contain at least one unmasked token.')
+        next_positions = last_positions + 1
+    else:
+        next_positions = torch.empty(0, dtype = torch.long, device = device)
 
-        logits = model({
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-        })  # (B, T, V)
+    finished = torch.zeros(B, dtype = torch.bool, device = device)
+    stop_token_ids = {int(token_id) for token_id in (tokenizer.eos_token_id, tokenizer.pad_token_id) if token_id is not None}
 
-        last_logits = logits[batch_indices, idxs, :]  # (B, V)
+    for i in range(max_steps):
+        active = budgets.gt(i)
+        if stop_on_eos:
+            active &= ~finished
+        if not active.any():
+            break
+
+        active_indices = active.nonzero(as_tuple = False).flatten()
+        active_last_positions = next_positions[active_indices] - 1
+        active_width = int(next_positions[active_indices].max().item())
+
+        model_batch = {
+            'input_ids': input_ids[active_indices, :active_width],
+            'attention_mask': attention_mask[active_indices, :active_width],
+            **model_kwargs,
+        }
+        logits = model(model_batch, **forward_kwargs)
+        local_indices = torch.arange(active_indices.numel(), device = device)
+        last_logits = logits[local_indices, active_last_positions, :]
 
         if temperature == 0:
-            dist_logits = last_logits
-            token_next = dist_logits.argmax(dim = -1)
+            token_next = last_logits.argmax(dim = -1)
         else:
-            dist_logits = last_logits / temperature
-            dist_logits = top_p_filtering(dist_logits, top_p = top_p, min_tokens_to_keep = 1)
+            dist_logits = top_p_filtering(last_logits / temperature, top_p = top_p, min_tokens_to_keep = 1)
             token_next = fast_categorical_sample(dist_logits, temperature = 1.0)
 
-        token_idx = token_next.unsqueeze(-1)  # (B, 1)
+        token_positions = next_positions[active_indices]
+        input_ids[active_indices, token_positions] = token_next
+        answer[active_indices, i] = token_next
 
-        positions = idxs + 1
-        input_ids[batch_indices, positions] = token_next
-        answer[:, i] = token_next
+        is_stop = torch.zeros_like(token_next, dtype = torch.bool)
+        if stop_on_eos:
+            for stop_token_id in stop_token_ids:
+                is_stop |= token_next.eq(stop_token_id)
 
-        cond = (token_next == 2) | (token_next == 3)
-        new_token_mask = torch.where(cond, torch.tensor(0, device = device), torch.tensor(1, device = device))
+        continuing_indices = active_indices[~is_stop]
+        continuing_positions = token_positions[~is_stop]
+        attention_mask_answer[continuing_indices, i] = 1
+        attention_mask[continuing_indices, continuing_positions] = 1
+        next_positions[continuing_indices] += 1
 
-        attention_mask_answer[:, i] = new_token_mask
-        attention_mask[batch_indices, positions] = new_token_mask
-
-        is_eos = is_eos | (token_idx == 3) | (token_idx == 2)
-        if stop_on_eos and is_eos.all():
-            break
+        if stop_on_eos:
+            finished[active_indices[is_stop]] = True
 
     return {
         'input_ids': input_ids,

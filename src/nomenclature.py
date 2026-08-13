@@ -5,6 +5,7 @@ MODELS = {'llm': models.TransformerDecoder}
 import datasetss
 
 DATASETS = {
+    'deepmind_mathematics': datasetss.DeepMindMathematicsDataset,
     'pretraining': datasetss.PretrainingDataset,
 }
 
@@ -18,6 +19,7 @@ TRAINERS = {
 import evaluators
 
 EVALUATORS = {
+    'deepmind_mathematics': evaluators.DeepMindMathematicsEvaluator,
     'pretraining': evaluators.PretrainingEvaluator,
     'recurrent_distillation': evaluators.RecurrentDistillationEvaluator,
 }

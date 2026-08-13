@@ -147,6 +147,26 @@ def _batch_tokenize_texts(texts, tokenizer):
     return input_ids, attention_mask
 
 
+def _pad_token_sequences(sequences, padding_value, padding_side = 'left'):
+    sequences = [torch.tensor(sequence, dtype = torch.long) for sequence in sequences]
+    return torch.nn.utils.rnn.pad_sequence(
+        sequences,
+        batch_first = True,
+        padding_value = int(padding_value),
+        padding_side = padding_side,
+    )
+
+
+def _mathematics_prompt(question):
+    return f'Question: {question}\nAnswer:'
+
+
+def _mathematics_answer(answer):
+    # The leading space is part of the target. It makes both training and
+    # generation continue naturally after the trailing colon in the prompt.
+    return f' {answer}'
+
+
 class HFDataset(AcumenDataset):
 
     def __init__(self, args, kind = 'train'):
@@ -155,7 +175,6 @@ class HFDataset(AcumenDataset):
         self.args = args
         self.kind = kind
         self.hf_token = os.environ.get('HF_TOKEN', None)
-
 
         self.chunk_size = args.dataset_args.chunk_size
         self.subset = None if args.dataset_args.subset is None or not len(args.dataset_args.subset.replace("'", "").replace('"', "").strip()) else args.dataset_args.subset
@@ -309,3 +328,152 @@ class PretrainingDataset(HFDataset):
             dataset = _dataset.select(range(num_batches_of_interest))
 
         return dataset
+
+
+class DeepMindMathematicsDataset(HFDataset):
+    """Generated DeepMind Mathematics question/answer pairs.
+
+    Training examples contain the prompt and answer in one causal sequence. The
+    prompt remains visible to self-attention, but its labels and
+    ``loss_attention_mask`` entries are masked so only the answer and EOS token
+    contribute to the language-modeling objective.
+    """
+
+    DEFAULT_TEST_SPLIT = 'interpolate'
+
+    def __getitem__(self, idx):
+        sample = self.dataset[idx]
+        return {
+            'question': str(sample['question']),
+            'answer': str(sample['answer']),
+            'module': str(sample.get('module', '')),
+            **({
+                'answer_token_length': int(sample['answer_token_length'])
+            } if 'answer_token_length' in sample else {}),
+        }
+
+    def _split_name(self, loaded_dataset):
+        if not isinstance(loaded_dataset, hfds.DatasetDict):
+            return None
+
+        if self.kind == 'train':
+            split_name = self.args.dataset_args.get('train_split', 'train')
+        elif self.kind in loaded_dataset:
+            split_name = self.kind
+        else:
+            split_name = self.args.dataset_args.get('test_split', self.DEFAULT_TEST_SPLIT)
+
+        if split_name not in loaded_dataset:
+            raise ValueError(f"DeepMind Mathematics split '{split_name}' is unavailable. "
+                             f'Available splits: {list(loaded_dataset.keys())}')
+        return split_name
+
+    def _answer_token_length(self, answer):
+        return len(_coerce_token_ids(self.tokenizer.encode(_mathematics_answer(answer), add_special_tokens = False)))
+
+    def load_dataset(self):
+        dataset_name = self.args.dataset_args.dataset_name
+        if isinstance(dataset_name, list):
+            if len(dataset_name) != 1:
+                raise ValueError('DeepMind Mathematics expects exactly one generated dataset path.')
+            dataset_name = dataset_name[0]
+
+        dataset_path = Path(dataset_name).expanduser()
+        if not dataset_path.exists():
+            raise FileNotFoundError(f'DeepMind Mathematics dataset not found at {dataset_path}. '
+                                    'Generate it with scripts/make_deepmind_mathematics_dataset.py.')
+
+        print(f'[DeepMindMathematicsDataset] Loading generated dataset from {dataset_path}')
+        loaded_dataset = hfds.load_from_disk(str(dataset_path))
+        split_name = self._split_name(loaded_dataset)
+        dataset = loaded_dataset if split_name is None else loaded_dataset[split_name]
+
+        required_columns = {'question', 'answer'}
+        missing_columns = required_columns.difference(dataset.column_names)
+        if missing_columns:
+            raise ValueError(f'DeepMind Mathematics dataset is missing columns: {sorted(missing_columns)}')
+
+        if self.kind != 'train':
+            max_eval_samples = self.args.dataset_args.get('max_eval_samples', None)
+            if max_eval_samples is not None:
+                max_eval_samples = min(int(max_eval_samples), len(dataset))
+                dataset = dataset.shuffle(seed = int(self.args.seed)).select(range(max_eval_samples))
+
+            answer_token_lengths = [self._answer_token_length(str(answer)) for answer in dataset['answer']]
+            if 'answer_token_length' in dataset.column_names:
+                dataset = dataset.remove_columns('answer_token_length')
+            dataset = dataset.add_column('answer_token_length', answer_token_lengths)
+            # Evaluation batches contain similarly sized targets. Together with
+            # per-example generation budgets, this minimizes wasted decode work.
+            dataset = dataset.sort('answer_token_length')
+
+        print(f'[DeepMindMathematicsDataset] Split {split_name or self.kind}: {len(dataset)} examples')
+        return dataset
+
+    @classmethod
+    def collate_fn(cls, args, token_tokenizer, kind = 'train'):
+        chunk_size = int(args.dataset_args.chunk_size)
+
+        def _tokenize(text):
+            return _coerce_token_ids(token_tokenizer.encode(text, add_special_tokens = False))
+
+        def _collate_fn(batch):
+            prompts = [_mathematics_prompt(sample['question']) for sample in batch]
+            prompt_token_ids = [_tokenize(prompt) for prompt in prompts]
+
+            if kind != 'train':
+                input_ids = [[int(token_tokenizer.bos_token_id)] + prompt_ids for prompt_ids in prompt_token_ids]
+                longest_prompt = max(map(len, input_ids))
+                if longest_prompt > chunk_size:
+                    raise ValueError(f'Mathematics prompt has {longest_prompt} tokens, exceeding chunk_size={chunk_size}.')
+
+                attention_mask = _pad_token_sequences(
+                    [[1] * len(sequence) for sequence in input_ids],
+                    padding_value = 0,
+                    padding_side = 'right',
+                )
+                input_ids = _pad_token_sequences(
+                    input_ids,
+                    padding_value = int(token_tokenizer.pad_token_id),
+                    padding_side = 'right',
+                )
+                answer_token_lengths = [sample.get('answer_token_length', len(_tokenize(_mathematics_answer(sample['answer'])))) for sample in batch]
+
+                return {
+                    'input_ids': input_ids,
+                    'attention_mask': attention_mask,
+                    'answer': [sample['answer'] for sample in batch],
+                    'answer_token_length': torch.tensor(answer_token_lengths, dtype = torch.long),
+                    'module': [sample['module'] for sample in batch],
+                }
+
+            answer_token_ids = [_tokenize(_mathematics_answer(sample['answer'])) for sample in batch]
+            target_ids = [prompt_ids + answer_ids + [int(token_tokenizer.eos_token_id)] for prompt_ids, answer_ids in zip(prompt_token_ids, answer_token_ids)]
+            longest_sequence = max(map(len, target_ids))
+            if longest_sequence > chunk_size:
+                raise ValueError(f'Mathematics example has {longest_sequence} tokens, exceeding chunk_size={chunk_size}.')
+
+            model_attention_masks = [[1] * len(sequence) for sequence in target_ids]
+            loss_attention_masks = [[0] * len(prompt_ids) + [1] * (len(answer_ids) + 1) for prompt_ids, answer_ids in zip(prompt_token_ids, answer_token_ids)]
+
+            input_ids = _pad_token_sequences(target_ids, token_tokenizer.pad_token_id, padding_side = 'left')
+            attention_mask = _pad_token_sequences(model_attention_masks, 0, padding_side = 'left')
+            loss_attention_mask = _pad_token_sequences(loss_attention_masks, 0, padding_side = 'left')
+            shifted_input_ids, labels = _shift_right(
+                input_ids = input_ids,
+                attention_mask = attention_mask,
+                bos_token_id = int(token_tokenizer.bos_token_id),
+                pad_token_id = int(token_tokenizer.pad_token_id),
+            )
+            labels = labels.masked_fill(loss_attention_mask == 0, -100)
+
+            return {
+                'input_ids': shifted_input_ids,
+                # The question must remain visible here so answer tokens can
+                # condition on it. loss_attention_mask is the answer-only mask.
+                'attention_mask': attention_mask,
+                'loss_attention_mask': loss_attention_mask,
+                'labels': labels,
+            }
+
+        return _collate_fn

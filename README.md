@@ -15,6 +15,30 @@ For a local single-node run, use the same experiment script:
 NUM_GPUS=1 ENV_NAME=fep ./src/experiments/run_pretraining.sh
 ```
 
+## DeepMind Mathematics
+
+Generate the balanced local dataset (about 631,000 examples with the defaults):
+
+```bash
+uv run python src/scripts/make_deepmind_mathematics_dataset.py
+```
+
+The generated train, interpolation, and extrapolation splits are stored under
+`src/data/deepmind_mathematics`. Train with the dedicated configuration from
+the `src` directory:
+
+```bash
+cd src
+uv run torchrun --standalone --nnodes 1 --nproc-per-node 1 main.py \
+  --config_file configs/deepmind-mathematics-config.yaml \
+  --group mathematics --name deepmind-mathematics
+```
+
+Question tokens are visible as causal context but excluded from the loss. The
+mathematics evaluator sorts examples by tokenized answer length and reports
+exact-answer accuracy at 1, 2, 4, 8, and 16 recurrent loops, with generation
+capped separately at each reference answer's token length.
+
 `src/configs/pretraining-config.yaml` selects `recurrent_distillation_trainer`.
 Each batch samples a student depth uniformly from 1 through
 `2 * mean_recurrence - 1`. With `teacher_depth_mode: additive`, it adds a
