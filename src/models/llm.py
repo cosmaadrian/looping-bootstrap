@@ -132,6 +132,7 @@ class TransformerDecoder(nn.Module):
 
         embeddings = self.token_embeddings(input_ids)
 
+        # TODO maybe the student is the one with noise, not the teacher.
         if is_teacher and self.args.model_args.noise_std > 0:
             noise = torch.randn_like(embeddings) * self.args.model_args.noise_std
             embeddings = embeddings + noise

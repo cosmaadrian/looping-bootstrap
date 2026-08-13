@@ -132,6 +132,9 @@ class RecurrentDistillationTrainer(LMTrainer):
         # Use one CPU generator so every DDP rank samples the same depth pair.
         generator = torch.Generator(device = 'cpu')
         generator.manual_seed(self.args.seed + batch_idx)
+
+        # TODO this should be a long-tailed Poisson distribution; many shallower depths and a few deeper ones.
+        # TODO low = 1 might be too low.
         student_depth = torch.randint(
             low = 1,
             high = self.max_student_depth + 1,
@@ -159,7 +162,7 @@ class RecurrentDistillationTrainer(LMTrainer):
         return model({
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
-            'num_steps_pair': (depth - grad_depth + 1, grad_depth + 1),
+            'num_steps_pair': (depth - grad_depth, grad_depth),
         }, intended_num_loops = depth, is_teacher = is_teacher)
 
     def _distillation_loss(self, student_logits, teacher_logits, labels):
@@ -169,7 +172,7 @@ class RecurrentDistillationTrainer(LMTrainer):
         labels = labels[valid_tokens]
 
         if student_logits.numel() == 0:
-            return student_logits.sum()
+            return student_logits.sum(), 0.0
 
         with torch.no_grad():
             student_token_losses = F.cross_entropy(
@@ -184,18 +187,18 @@ class RecurrentDistillationTrainer(LMTrainer):
             )
             teacher_is_better = teacher_token_losses < student_token_losses
 
+        percent_teacher_is_better = 100 * teacher_is_better.sum().item() / labels.numel()
+
         student_logits = student_logits[teacher_is_better]
         teacher_logits = teacher_logits[teacher_is_better]
 
         if student_logits.numel() == 0:
-            return student_logits.sum()
+            return student_logits.sum(), percent_teacher_is_better
 
         temperature = self.temperature
         student_log_probs = F.log_softmax(student_logits.float(), dim = -1)
         teacher_probs = F.softmax(teacher_logits.float() / temperature, dim = -1)
 
-        percent_teacher_is_better = 100 * teacher_is_better.sum().item() / labels.numel()
-        
         return F.kl_div(
             student_log_probs,
             teacher_probs,
