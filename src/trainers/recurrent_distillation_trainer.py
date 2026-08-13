@@ -240,21 +240,20 @@ class RecurrentDistillationTrainer(LMTrainer):
         use_ce_anchor = self.anchor_all_depths or student_depth == self.max_student_depth
         anchored_next_token_loss = next_token_loss if use_ce_anchor else next_token_loss * 0
         total_loss = anchored_next_token_loss + self.distillation_weight * distillation_loss
-        if self.recurrent_distillation:
-            self.log_dict({
-                'train/perc_teacher_is_better': percent_teacher_is_better,
-            }, on_step = False, force_log = True)
 
         if self.iter_idx % self.args.log_every == 0:  # prevent doing .item() too often
             log_dict = {
                 'train/loss:ntp': next_token_loss.item(),
-                'train/loss:distillation': distillation_loss.item(),
                 'train/loss:total': total_loss.item(),
                 'train/student_depth': student_depth,
             }
-            if teacher_loss is not None:
-                log_dict['train/loss:teacher'] = teacher_loss.item()
-                log_dict['train/teacher_depth'] = teacher_depth
+
+            if self.recurrent_distillation:
+                log_dict['train/perc_teacher_is_better'] = percent_teacher_is_better
+                log_dict['train/loss:distillation'] = distillation_loss.item()
+                if teacher_loss is not None:
+                    log_dict['train/loss:teacher'] = teacher_loss.item()
+                    log_dict['train/teacher_depth'] = teacher_depth
 
             self.log_dict(log_dict, on_step = False, force_log = True)
 
