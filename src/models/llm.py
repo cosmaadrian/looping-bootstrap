@@ -32,9 +32,7 @@ class TimestepEmbedder(nn.Module):
     def timestep_embedding(t, dim, max_period=10000):
         half = dim // 2
 
-        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(
-            device=t.device
-        )
+        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(device=t.device)
 
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
@@ -135,8 +133,9 @@ class TransformerDecoder(nn.Module):
 
         outputs = embeddings
 
-        initial_state = torch.randn_like(embeddings) * 0.5
-        outputs = outputs + initial_state
+        if self.training:
+            initial_state = torch.randn_like(embeddings) * 0.5
+            outputs = outputs + initial_state
 
         time_idx = 0
         step_size = torch.tensor(
