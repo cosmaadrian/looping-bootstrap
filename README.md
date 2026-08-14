@@ -25,10 +25,11 @@ https://arxiv.org/pdf/2410.11081 <-- close to us
 - [X] Use LoopFormer trick: add a time-conditioned embedding at each layer.
 - [ ] Log or check to see if teacher ends up in a loop or in a fixed point attractor
 
+<!-- - [ ] Semi-Supervised learning (i.e., self distillation) on questions requiring algorithmic steps (incorporating reasoning inside parameters) -->
+
 ## Test-Time Training
 
-- [ ] Semi-Supervised learning (i.e., self distillation) on questions requiring algorithmic steps (incorporating reasoning inside parameters)
 - [ ] From initial embeddings, add some noise K times, (i.e., K different starting positions)
 - [ ] From each of the K starting positions, do 2N loops, average logits, sharpen (this is the teacher)
 - [ ] Train a student with N loops on the average logits. Something about agreement at multiple depth levels --> this allows us to check for divergences (or convergences or answers)
-- [ ] One nice thing about looping transformers is that we can decode at each recurrence level without problems. We can then leverage that.
+- [ ] One nice thing about looping transformers is that we can decode at each recurrence level. Maybe we can then leverage that.

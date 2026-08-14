@@ -15,12 +15,18 @@ def prepare_attention_mask(attention_mask):
 class TimestepEmbedder(nn.Module):
     def __init__(self, hidden_size, frequency_embedding_size=256):
         super().__init__()
-        self.mlp = nn.Sequential(
+        # Keep the original time-projection name for checkpoint compatibility.
+        self.mlp = self._make_mlp(frequency_embedding_size, hidden_size)
+        self.step_size_mlp = self._make_mlp(frequency_embedding_size, hidden_size)
+        self.frequency_embedding_size = frequency_embedding_size
+
+    @staticmethod
+    def _make_mlp(frequency_embedding_size, hidden_size):
+        return nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
             nn.SiLU(),
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
-        self.frequency_embedding_size = frequency_embedding_size
 
     @staticmethod
     def timestep_embedding(t, dim, max_period=10000):
@@ -38,11 +44,15 @@ class TimestepEmbedder(nn.Module):
 
         return embedding
 
-    def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        t_freq = t_freq.to(dtype=self.mlp[0].weight.dtype)
-        t_emb = self.mlp(t_freq)
-        return t_emb
+    def _project(self, value, mlp):
+        frequency_embedding = self.timestep_embedding(value, self.frequency_embedding_size)
+        frequency_embedding = frequency_embedding.to(dtype=mlp[0].weight.dtype)
+        return mlp(frequency_embedding)
+
+    def forward(self, t, step_size):
+        time_embedding = self._project(t, self.mlp)
+        step_size_embedding = self._project(step_size, self.step_size_mlp)
+        return time_embedding + step_size_embedding
 
 
 class TransformerDecoder(nn.Module):
@@ -63,6 +73,11 @@ class TransformerDecoder(nn.Module):
         self.token_embeddings = nn.Embedding(
             num_embeddings = self.token_vocab_size,
             embedding_dim = int(self.args.model_args.dmodel * self.args.model_width_multiplier),
+        )
+
+        self.timestep_embedder = TimestepEmbedder(
+            hidden_size = int(self.args.model_args.dmodel * self.args.model_width_multiplier),
+            frequency_embedding_size = 256,
         )
         ###################################################################
 
@@ -120,13 +135,19 @@ class TransformerDecoder(nn.Module):
 
         outputs = embeddings
 
-        initial_state = torch.randn_like(embeddings) * 0.4
+        initial_state = torch.randn_like(embeddings) * 0.5
         outputs = outputs + initial_state
 
         time_idx = 0
+        step_size = torch.tensor(
+            [1.0 / intended_num_loops],
+            device = outputs.device,
+            dtype = torch.float32,
+        )
         with torch.no_grad():
             for _ in range(num_steps_no_grad):
-                time_embedding = self.timestep_embedder(torch.tensor([time_idx], device=outputs.device))
+                normalized_time = step_size * time_idx
+                time_embedding = self.timestep_embedder(normalized_time, step_size)
                 outputs = outputs + time_embedding
                 time_idx += 1
 
@@ -142,7 +163,8 @@ class TransformerDecoder(nn.Module):
             outputs = outputs + embeddings.sum() * 0
 
         for _ in range(num_steps_with_grad):
-            time_embedding = self.timestep_embedder(torch.tensor([time_idx], device=outputs.device))
+            normalized_time = step_size * time_idx
+            time_embedding = self.timestep_embedder(normalized_time, step_size)
             outputs = outputs + time_embedding
             time_idx += 1
             outputs = self.model(
