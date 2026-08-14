@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from .utils import MuReadout, configure_depth_mup_parameters
 from .building_blocks import TransformerEncoder
-
+import math
 
 def prepare_attention_mask(attention_mask):
     attention_mask = attention_mask.float()
@@ -10,6 +10,39 @@ def prepare_attention_mask(attention_mask):
     attention_mask[attention_mask == 0] = -10000
     attention_mask[attention_mask == 1] = 0
     return attention_mask
+
+
+class TimestepEmbedder(nn.Module):
+    def __init__(self, hidden_size, frequency_embedding_size=256):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(frequency_embedding_size, hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size, bias=True),
+        )
+        self.frequency_embedding_size = frequency_embedding_size
+
+    @staticmethod
+    def timestep_embedding(t, dim, max_period=10000):
+        half = dim // 2
+
+        freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(
+            device=t.device
+        )
+
+        args = t[:, None].float() * freqs[None]
+        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+
+        if dim % 2:
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+
+        return embedding
+
+    def forward(self, t):
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_freq = t_freq.to(dtype=self.mlp[0].weight.dtype)
+        t_emb = self.mlp(t_freq)
+        return t_emb
 
 
 class TransformerDecoder(nn.Module):
@@ -90,8 +123,13 @@ class TransformerDecoder(nn.Module):
         initial_state = torch.randn_like(embeddings) * 0.4
         outputs = outputs + initial_state
 
+        time_idx = 0
         with torch.no_grad():
             for _ in range(num_steps_no_grad):
+                time_embedding = self.timestep_embedder(torch.tensor([time_idx], device=outputs.device))
+                outputs = outputs + time_embedding
+                time_idx += 1
+
                 outputs = self.model(
                     outputs,
                     mask = attention_mask,
@@ -104,6 +142,9 @@ class TransformerDecoder(nn.Module):
             outputs = outputs + embeddings.sum() * 0
 
         for _ in range(num_steps_with_grad):
+            time_embedding = self.timestep_embedder(torch.tensor([time_idx], device=outputs.device))
+            outputs = outputs + time_embedding
+            time_idx += 1
             outputs = self.model(
                 outputs,
                 mask = attention_mask,
@@ -131,8 +172,7 @@ class TransformerDecoder(nn.Module):
             attention_mask = prepare_attention_mask(attention_mask)
 
         embeddings = self.token_embeddings(input_ids)
-
-        # TODO maybe the student is the one with noise, not the teacher.
+        
         if is_teacher and self.args.model_args.noise_std > 0:
             noise = torch.randn_like(embeddings) * self.args.model_args.noise_std
             embeddings = embeddings + noise
@@ -153,5 +193,4 @@ class TransformerDecoder(nn.Module):
         outputs = self.post_transformer(outputs, mask = attention_mask, causal_mask = True)
 
         out = self.decoder_out(outputs)
-
         return out
