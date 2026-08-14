@@ -17,7 +17,6 @@ class RecurrentDistillationTrainer(LMTrainer):
         self.teacher_momentum = float(args.get('teacher_momentum', 0.0))
         self.mean_recurrence = int(args.model_args.mean_recurrence)
         self.mean_backprop_depth = int(args.model_args.mean_backprop_depth)
-        self.max_student_depth = 2 * self.mean_recurrence - 1
         self.teacher_depth_mode = str(args.get('teacher_depth_mode', 'additive')).lower()
         self.teacher_depth_offset_min = int(args.get('teacher_depth_offset_min', 2))
         self.teacher_depth_offset_max = int(args.get('teacher_depth_offset_max', 6))
@@ -26,25 +25,7 @@ class RecurrentDistillationTrainer(LMTrainer):
         self.temperature = float(args.temperature)
         self.anchor_all_depths = bool(args.anchor_all_depths)
 
-        if self.mean_recurrence < 1:
-            raise ValueError('mean_recurrence must be at least 1')
-        if self.mean_backprop_depth < 1:
-            raise ValueError('mean_backprop_depth must be at least 1')
-        if self.teacher_depth_mode not in ('additive', 'multiplicative'):
-            raise ValueError("teacher_depth_mode must be either 'additive' or 'multiplicative'")
-        if self.teacher_depth_mode == 'additive':
-            if self.teacher_depth_offset_min < 1:
-                raise ValueError('teacher_depth_offset_min must be at least 1')
-            if self.teacher_depth_offset_max < self.teacher_depth_offset_min:
-                raise ValueError('teacher_depth_offset_max must be at least teacher_depth_offset_min')
-        elif self.teacher_depth_multiplier < 2:
-            raise ValueError('teacher_depth_multiplier must be at least 2')
-        if self.distillation_weight < 0:
-            raise ValueError('distillation_weight must be non-negative')
-        if self.temperature <= 0:
-            raise ValueError('temperature must be greater than zero')
-        if not 0 <= self.teacher_momentum < 1:
-            raise ValueError('teacher_momentum must be in the interval [0, 1)')
+
 
         self.teacher_model = None
         if self.recurrent_distillation:
@@ -133,14 +114,10 @@ class RecurrentDistillationTrainer(LMTrainer):
         generator = torch.Generator(device = 'cpu')
         generator.manual_seed(self.args.seed + batch_idx)
 
-        # TODO this should be a long-tailed Poisson distribution; many shallower depths and a few deeper ones.
-        # TODO low = 1 might be too low.
-        student_depth = torch.randint(
-            low = 1,
-            high = self.max_student_depth + 1,
-            size = (),
+        student_depth = int(torch.poisson(
+            torch.tensor(float(self.mean_recurrence)),
             generator = generator,
-        ).item()
+        ).clamp_(1, self.mean_recurrence * 4).item())
 
         if self.teacher_depth_mode == 'multiplicative':
             teacher_depth = self.teacher_depth_multiplier * student_depth
@@ -237,11 +214,7 @@ class RecurrentDistillationTrainer(LMTrainer):
             teacher_loss = None
             distillation_loss = student_logits.new_zeros(())
 
-        # With the default anchor_all_depths=true, every sampled student is
-        # directly supervised. Disabling it leaves only the deepest student
-        # anchored to labels and trains shallower depths through distillation.
-        use_ce_anchor = self.anchor_all_depths or student_depth == self.max_student_depth
-        anchored_next_token_loss = next_token_loss if use_ce_anchor else next_token_loss * 0
+        anchored_next_token_loss = next_token_loss
         total_loss = anchored_next_token_loss + self.distillation_weight * distillation_loss
 
         if self.iter_idx % self.args.log_every == 0:  # prevent doing .item() too often

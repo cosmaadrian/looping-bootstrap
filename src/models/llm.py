@@ -149,6 +149,10 @@ class TransformerDecoder(nn.Module):
                 normalized_time = step_size * time_idx
                 time_embedding = self.timestep_embedder(normalized_time, step_size)
                 outputs = outputs + time_embedding
+
+                if time_idx > 0:
+                    outputs = outputs + embeddings
+
                 time_idx += 1
 
                 outputs = self.model(
@@ -166,6 +170,7 @@ class TransformerDecoder(nn.Module):
             normalized_time = step_size * time_idx
             time_embedding = self.timestep_embedder(normalized_time, step_size)
             outputs = outputs + time_embedding
+            outputs = outputs + embeddings
             time_idx += 1
             outputs = self.model(
                 outputs,
