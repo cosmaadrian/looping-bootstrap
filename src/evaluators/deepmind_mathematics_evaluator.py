@@ -98,7 +98,7 @@ class DeepMindMathematicsEvaluator(PretrainingEvaluator):
         return [Metric(
             f'accuracy@{depth}_loops',
             value = accuracy,
-            monotonicity = ['instant', 'up'],
+            monotonicity = ['instant'],
             evaluator = self,
         ) for depth, accuracy in zip(self.depths, accuracies)]
 

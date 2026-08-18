@@ -14,6 +14,7 @@ import trainers
 TRAINERS = {
     'lm_trainer': trainers.LMTrainer,
     'recurrent_distillation_trainer': trainers.RecurrentDistillationTrainer,
+    'consistency_trainer': trainers.ConsistencyTrainer,
 }
 
 import evaluators
