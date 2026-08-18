@@ -1,5 +1,3 @@
-import copy
-
 import torch
 import torch.nn.functional as F
 
@@ -7,14 +5,13 @@ from .lm_trainer import LMTrainer
 
 
 class ConsistencyTrainer(LMTrainer):
-    """Train a sampled recurrent depth from a deeper, detached prediction."""
+    """Self-distill between two recurrent depths of one shared model."""
 
-    def __init__(self, args, model, teacher_model = None):
+    def __init__(self, args, model):
         super().__init__(args, model)
 
         self.student_model = model
         self.recurrent_distillation = bool(args.recurrent_distillation)
-        self.teacher_momentum = float(args.get('teacher_momentum', 0.0))
         self.mean_recurrence = int(args.model_args.mean_recurrence)
         self.mean_backprop_depth = int(args.model_args.mean_backprop_depth)
         self.teacher_depth_mode = str(args.get('teacher_depth_mode', 'additive')).lower()
@@ -23,89 +20,9 @@ class ConsistencyTrainer(LMTrainer):
         self.teacher_depth_multiplier = int(args.get('teacher_depth_multiplier', 2))
         self.distillation_weight = float(args.distillation_weight)
         self.temperature = float(args.temperature)
-        self.anchor_all_depths = bool(args.anchor_all_depths)
 
-        self.teacher_model = None
-        if self.recurrent_distillation:
-            if teacher_model is None:
-                # This fallback keeps direct construction useful in tests and
-                # other entry points. main.py supplies a pre-DDP copy.
-                teacher_model = copy.deepcopy(self._unwrap_model(self.student_model))
-
-            self.teacher_model = teacher_model
-            self._copy_student_to_teacher()
-            self.teacher_model.requires_grad_(False)
-            self.teacher_model.eval()
-
-    @staticmethod
-    def _unwrap_model(model):
-        if isinstance(model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)):
-            model = model.module
-        if hasattr(model, '_orig_mod'):
-            model = model._orig_mod
-        return model
-
-    @torch.no_grad()
-    def _copy_student_to_teacher(self):
-        student_model = self._unwrap_model(self.student_model)
-        student_parameter = next(student_model.parameters(), None)
-        if student_parameter is not None:
-            self.teacher_model.to(student_parameter.device)
-        self.teacher_model.load_state_dict(student_model.state_dict())
-
-    @torch.no_grad()
-    def _update_teacher(self):
-        student_model = self._unwrap_model(self.student_model)
-        student_parameters = dict(student_model.named_parameters())
-        teacher_parameters = dict(self.teacher_model.named_parameters())
-
-        if student_parameters.keys() != teacher_parameters.keys():
-            raise RuntimeError('teacher and student parameters do not match')
-
-        momentum = self.teacher_momentum
-        for name, teacher_parameter in teacher_parameters.items():
-            student_parameter = student_parameters[name].detach()
-            teacher_parameter.mul_(momentum).add_(student_parameter, alpha = 1 - momentum)
-
-        # Keep stateful layers consistent as well. Integer buffers are copied;
-        # floating-point buffers use the same moving average as parameters.
-        student_buffers = dict(student_model.named_buffers())
-        for name, teacher_buffer in self.teacher_model.named_buffers():
-            if name not in student_buffers or teacher_buffer.shape != student_buffers[name].shape:
-                continue
-
-            student_buffer = student_buffers[name].detach()
-            if teacher_buffer.is_floating_point() or teacher_buffer.is_complex():
-                teacher_buffer.mul_(momentum).add_(student_buffer, alpha = 1 - momentum)
-            else:
-                teacher_buffer.copy_(student_buffer)
-
-    def optimizer_step_end(self):
-        if self.teacher_model is not None:
-            self._update_teacher()
-
-    def training_start(self):
-        if self.teacher_model is not None:
-            self.teacher_model.eval()
-
-    def get_checkpoint_state(self):
-        if self.teacher_model is None:
-            return {}
-        return {'teacher_model_state_dict': self.teacher_model.state_dict()}
-
-    def load_checkpoint_state(self, state_dict):
-        if self.teacher_model is None:
-            return
-
-        teacher_state_dict = state_dict.get('teacher_model_state_dict')
-        if teacher_state_dict is None:
-            # Older checkpoints did not store a teacher. Initialize it from the
-            # just-restored student so they remain backwards compatible.
-            self._copy_student_to_teacher()
-            return
-
-        self.teacher_model.load_state_dict(teacher_state_dict)
-        self.teacher_model.eval()
+        if self.temperature <= 0:
+            raise ValueError('temperature must be greater than zero')
 
     def _sample_depths(self, batch_idx):
         # Use one CPU generator so every DDP rank samples the same depth pair.
@@ -130,11 +47,10 @@ class ConsistencyTrainer(LMTrainer):
 
         return student_depth, teacher_depth
 
-    def _forward_at_depth(self, batch, depth, model = None, is_teacher = False):
+    def _forward_at_depth(self, batch, depth, is_teacher = False):
         grad_depth = min(depth, self.mean_backprop_depth)
-        model = self.student_model if model is None else model
 
-        return model({
+        return self.student_model({
             'input_ids': batch['input_ids'],
             'attention_mask': batch['attention_mask'],
             'num_steps_pair': (depth - grad_depth, grad_depth),
@@ -147,7 +63,7 @@ class ConsistencyTrainer(LMTrainer):
         labels = labels[valid_tokens]
 
         if student_logits.numel() == 0:
-            return student_logits.sum(), 0.0
+            return student_logits.sum() + teacher_logits.sum(), 0.0
 
         with torch.no_grad():
             student_token_losses = F.cross_entropy(
@@ -161,32 +77,44 @@ class ConsistencyTrainer(LMTrainer):
                 reduction = 'none'
             )
             teacher_is_better = teacher_token_losses < student_token_losses
+            student_is_better = student_token_losses < teacher_token_losses
 
         percent_teacher_is_better = 100 * teacher_is_better.sum().item() / labels.numel()
-
-        student_logits = student_logits[teacher_is_better]
-        teacher_logits = teacher_logits[teacher_is_better]
-
-        if student_logits.numel() == 0:
-            return student_logits.sum(), percent_teacher_is_better
-
         temperature = self.temperature
-        student_log_probs = F.log_softmax(student_logits.float(), dim = -1)
-        teacher_probs = F.softmax(teacher_logits.float(), dim = -1)
 
-        student_to_teacher_loss = F.cross_entropy_with_logits(
-            student_logits.float(),
-            teacher_probs.detach(),
-            reduction = 'batchmean',
-        ) * temperature
+        consistency_loss = student_logits.new_zeros(())
 
-        teacher_to_student_loss = F.cross_entropy_with_logits(
-            teacher_logits.float(),
-            student_log_probs.detach(),
-            reduction = 'batchmean',
-        ) * temperature
+        if teacher_is_better.any():
+            student_log_probs = F.log_softmax(
+                student_logits[teacher_is_better].float() / temperature,
+                dim = -1,
+            )
+            teacher_probs = F.softmax(
+                teacher_logits[teacher_is_better].detach().float() / temperature,
+                dim = -1,
+            )
+            consistency_loss = consistency_loss + F.kl_div(
+                student_log_probs,
+                teacher_probs,
+                reduction = 'sum',
+            ) / labels.numel()
 
-        return student_to_teacher_loss + teacher_to_student_loss, percent_teacher_is_better
+        if student_is_better.any():
+            teacher_log_probs = F.log_softmax(
+                teacher_logits[student_is_better].float() / temperature,
+                dim = -1,
+            )
+            student_probs = F.softmax(
+                student_logits[student_is_better].detach().float() / temperature,
+                dim = -1,
+            )
+            consistency_loss = consistency_loss + F.kl_div(
+                teacher_log_probs,
+                student_probs,
+                reduction = 'sum',
+            ) / labels.numel()
+
+        return consistency_loss * temperature**2, percent_teacher_is_better
 
     def training_step(self, batch, batch_idx):
         self.iter_idx += 1
@@ -206,12 +134,10 @@ class ConsistencyTrainer(LMTrainer):
             teacher_logits = self._forward_at_depth(
                 batch,
                 teacher_depth,
-                model = self.teacher_model,
                 is_teacher = True,
             )
-            
             teacher_loss = self.next_token_prediction_loss(
-                teacher_logits.view(-1, teacher_logits.size(-1)),
+                teacher_logits.detach().view(-1, teacher_logits.size(-1)),
                 labels.view(-1),
             )
             distillation_loss, percent_teacher_is_better = self._consistency_loss(student_logits, teacher_logits, labels)
@@ -219,6 +145,8 @@ class ConsistencyTrainer(LMTrainer):
             teacher_loss = None
             distillation_loss = student_logits.new_zeros(())
 
+        # When not anchoring every sampled depth, retain direct supervision at
+        # the nominal recurrence depth and train the other depths by consistency.
         anchored_next_token_loss = next_token_loss
         total_loss = anchored_next_token_loss + self.distillation_weight * distillation_loss
 
